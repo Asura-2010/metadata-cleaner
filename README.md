@@ -48,7 +48,7 @@
 ### macOS
 
 ```
-终端运行 bash setup.sh  →  安装依赖  →  双击 metadata_cleaner.py
+终端运行 bash setup.sh  →  安装依赖  →  双击 启动工具.command
 ```
 
 ---
@@ -57,7 +57,7 @@
 
 ### 图形界面（单文件 / 批量均可）
 
-双击 `metadata_cleaner.py`：
+macOS 双击 `启动工具.command`，Windows 双击 `metadata_cleaner.py`：
 
 1. 点击 **「添加文件」**，选择要处理的文件（按住 `Ctrl` 或 `Cmd` 可多选，**支持批量**）
 2. 点击 **「清除元数据」**
