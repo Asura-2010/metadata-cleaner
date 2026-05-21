@@ -530,10 +530,61 @@ def _read_office_metadata(filepath: str) -> dict:
                 if props:
                     result["自定义属性 (custom.xml)"] = props
 
+            # --- embedded image metadata ----------------------------------
+            image_meta: dict[str, str] = {}
+            for name in z.namelist():
+                if name.lower().endswith((".png", ".jpg", ".jpeg", ".gif",
+                                           ".bmp", ".tiff", ".tif", ".webp")):
+                    try:
+                        raw = z.read(name)
+                        info = _read_image_metadata(raw)
+                        if info:
+                            # Use filename + metadata as key
+                            short_name = name.rsplit("/", 1)[-1]
+                            for key, val in info.items():
+                                image_meta[f"{short_name} → {key}"] = val
+                    except Exception:
+                        pass
+            if image_meta:
+                result["嵌入图片元数据"] = image_meta
+
     except Exception as exc:
         result["错误"] = {"读取失败": str(exc)}
 
     return result
+
+
+def _read_image_metadata(data: bytes) -> dict[str, str]:
+    """Extract metadata from raw image bytes. Returns {label: value}."""
+    if not HAS_IMAGE_SUPPORT:
+        return {}
+    try:
+        import io
+
+        img = Image.open(io.BytesIO(data))
+        info: dict[str, str] = {}
+
+        if img.format == "PNG":
+            for key, val in (img.text or {}).items():
+                info[key] = val
+        elif img.format in ("JPEG", "TIFF"):
+            exif = img.getexif()
+            if exif:
+                for tag_id, val in exif.items():
+                    from PIL.ExifTags import TAGS
+                    tag_name = TAGS.get(tag_id, f"Tag{tag_id}")
+                    if val and tag_name not in ("ExifOffset", "MakerNote"):
+                        info[tag_name] = str(val).strip()
+        elif img.format == "GIF":
+            if hasattr(img, "info"):
+                for key in ("comment", "duration"):
+                    val = img.info.get(key)
+                    if val:
+                        info[key] = str(val)
+
+        return info
+    except Exception:
+        return {}
 
 
 def _read_pdf_metadata(filepath: str) -> dict:
