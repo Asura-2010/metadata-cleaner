@@ -5,3 +5,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 test_*
+notes/
+icon.iconset/
+build/
+dist/
+*.spec

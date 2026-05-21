@@ -4,16 +4,13 @@ Metadata Cleaner - Cross-platform tool to remove metadata from Office files & PD
 Works on Windows, macOS, and Linux.
 """
 
+__version__ = "1.0.0"
+
 import os
 import re
 import sys
 import shutil
 import zipfile
-try:
-    import defusedxml.ElementTree as ET
-except ImportError:
-    import xml.etree.ElementTree as ET  # fallback, Python 3.8+ disables external entities by default
-from xml.etree.ElementTree import register_namespace
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
@@ -40,16 +37,6 @@ SUPPORTED_EXTENSIONS = {
 }
 OFFICE_EXTENSIONS = {".docx", ".xlsx", ".pptx", ".wps", ".et", ".dps"}
 
-# XML namespaces in Office Open XML properties
-NS_CORE = {
-    "cp": "http://schemas.openxmlformats.org/package/2006/metadata/core-properties",
-    "dc": "http://purl.org/dc/elements/1.1/",
-    "dcterms": "http://purl.org/dc/terms/",
-    "xsi": "http://www.w3.org/2001/XMLSchema-instance",
-}
-
-NS_APP = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"
-
 # Try importing pypdf (modern) then PyPDF2 (legacy) for PDF support
 try:
     from pypdf import PdfReader, PdfWriter
@@ -68,56 +55,79 @@ except ImportError:
 # Office file metadata cleaning
 # ============================================================
 
-# Fields in core.xml — namespace-qualified tag, action, and optional new value
-_CORE_FIELDS = [
-    # (full Clark-notation tag, action, new_value_or_None)
-    ("{http://purl.org/dc/elements/1.1/}creator", "clear", None),
-    ("{http://purl.org/dc/elements/1.1/}description", "clear", None),
-    ("{http://purl.org/dc/elements/1.1/}subject", "clear", None),
-    ("{http://purl.org/dc/elements/1.1/}title", "clear", None),
-    ("{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}lastModifiedBy", "clear", None),
-    ("{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}version", "clear", None),
-    ("{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}revision", "set", "1"),
-    ("{http://purl.org/dc/terms/}created", "clear", None),
-    ("{http://purl.org/dc/terms/}modified", "clear", None),
-]
-
 
 def _clean_core_xml(xml_bytes: bytes) -> bytes:
-    """Parse core.xml, strip/rewrite metadata fields, return cleaned XML bytes.
+    """Clear/remove metadata fields in core.xml using regex.
 
-    Elements are cleared (not removed) to preserve namespace declarations
-    that Word requires.  The XML declaration is normalised to double-quoted
-    attributes with standalone='yes' to match Office conventions.
+    String-typed fields are cleared (text emptied, element kept).
+    Date-typed fields are *removed entirely* — an empty string violates
+    the W3CDTF / dateTime schema constraint and Word rejects the file.
     """
-    for prefix, uri in NS_CORE.items():
-        register_namespace(prefix, uri)
+    data = xml_bytes
 
-    root = ET.fromstring(xml_bytes)
+    # String-typed fields: clear text, keep element  (prefix, localname)
+    _STRING_FIELDS = [
+        ("dc", "creator"),
+        ("dc", "description"),
+        ("dc", "subject"),
+        ("dc", "title"),
+        ("cp", "lastModifiedBy"),
+        ("cp", "version"),
+        ("cp", "keywords"),
+        ("cp", "category"),
+    ]
+    for prefix, local in _STRING_FIELDS:
+        data = re.sub(
+            rb"(<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?>)"
+            rb"[^<]*"
+            rb"(</" + prefix.encode() + rb":" + local.encode() + rb">)",
+            rb"\1\2",
+            data,
+        )
 
-    for tag, action, value in _CORE_FIELDS:
-        for elem in root.findall(tag):
-            if action == "clear":
-                elem.text = ""
-            elif action == "set":
-                elem.text = value
+    # Date-typed fields: remove the entire element including attributes
+    # (dcterms:W3CDTF and xsd:dateTime require valid dates — empty is invalid)
+    _DATE_FIELDS = [
+        ("dcterms", "created"),
+        ("dcterms", "modified"),
+        ("cp", "lastPrinted"),
+    ]
+    for prefix, local in _DATE_FIELDS:
+        # Match both <tag>text</tag> and self-closing <tag ... />
+        data = re.sub(
+            rb"<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?>"
+            rb"[^<]*"
+            rb"</" + prefix.encode() + rb":" + local.encode() + rb">",
+            b"",
+            data,
+        )
+        data = re.sub(
+            rb"<" + prefix.encode() + rb":" + local.encode() + rb"\s[^>]*/>",
+            b"",
+            data,
+        )
 
-    raw = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
-    # Normalise the XML declaration to Office-compatible format
-    # (regex handles varying quote styles across Python versions)
-    raw = re.sub(
-        rb"<\?xml[^>]+\?>",
-        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-        raw,
-        count=1,
+    # Clean up xsi:type which only existed on the removed date elements
+    data = re.sub(rb'\s+xsi:type=(?:"[^"]*"|\'[^\']*\')', b"", data)
+
+    # Set revision to 1 (must be a valid integer string)
+    data = re.sub(
+        rb"(<cp:revision(?:\s[^>]*)?>)[^<]*(</cp:revision>)",
+        rb"\g<1>1\g<2>",
+        data,
     )
-    return raw
+
+    return data
 
 
 # Fields in app.xml — the metadata we strip from extended properties
+# String fields: clear text (empty string is valid)
 _APP_FIELDS_TO_CLEAR = [
     "Company",
     "Manager",
+]
+# Integer fields: set to "0" (empty string is NOT valid for xsd:int)
+_APP_FIELDS_TO_ZERO = [
     "TotalTime",
 ]
 
@@ -131,20 +141,33 @@ _EMPTY_CUSTOM_XML = (
 
 
 def _clean_app_xml(xml_bytes: bytes) -> bytes:
-    """Parse app.xml, strip company/manager metadata, return cleaned XML bytes."""
-    register_namespace("", NS_APP)
-    root = ET.fromstring(xml_bytes)
+    """Clear company/manager metadata in app.xml using regex to preserve the
+    original XML structure byte-for-byte.
 
-    for field in _APP_FIELDS_TO_CLEAR:
-        for elem in root.findall(f"{{{NS_APP}}}{field}"):
-            elem.text = ""
+    String fields are cleared (empty text).  Integer fields (TotalTime)
+    are set to "0" — an empty string violates the xsd:int constraint.
+    """
+    data = xml_bytes
 
-    raw = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
-    raw = raw.replace(
-        b"<?xml version='1.0' encoding='UTF-8'?>",
-        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-    )
-    return raw
+    for local in _APP_FIELDS_TO_CLEAR:
+        data = re.sub(
+            rb"(<" + local.encode() + rb"(?:\s[^>]*)?>)"
+            rb"[^<]*"
+            rb"(</" + local.encode() + rb">)",
+            rb"\1\2",
+            data,
+        )
+
+    for local in _APP_FIELDS_TO_ZERO:
+        data = re.sub(
+            rb"(<" + local.encode() + rb"(?:\s[^>]*)?>)"
+            rb"[^<]*"
+            rb"(</" + local.encode() + rb">)",
+            rb"\g<1>0\g<2>",
+            data,
+        )
+
+    return data
 
 
 def clean_office_file(filepath: str) -> tuple:
@@ -176,9 +199,15 @@ def clean_office_file(filepath: str) -> tuple:
                     zout.writestr(item, _EMPTY_CUSTOM_XML)
                 # Stream everything else as-is (no memory accumulation)
                 else:
-                    zout.writestr(item, zin.read(name))
+                    with zin.open(item) as f_in, \
+                         zout.open(item.filename, "w") as f_out:
+                        shutil.copyfileobj(f_in, f_out)
 
-        # Atomic replace — original stays intact until tmp is fully written
+        # Preserve original file permissions before atomic replace
+        try:
+            shutil.copymode(filepath, tmp_path)
+        except OSError:
+            pass
         os.replace(tmp_path, filepath)
         return True, None
 
@@ -228,6 +257,10 @@ def clean_pdf_file(filepath: str) -> tuple:
         # Strip the /Producer entry that pypdf/PyPDF2 injects automatically
         _strip_pdf_producer(tmp_path)
 
+        try:
+            shutil.copymode(filepath, tmp_path)
+        except OSError:
+            pass
         os.replace(tmp_path, filepath)
         return True, None
 
@@ -242,16 +275,23 @@ def clean_pdf_file(filepath: str) -> tuple:
 
 
 def _strip_pdf_producer(path: str) -> None:
-    """Remove /Producer entry from a PDF's Info dictionary at byte level."""
+    """Remove /Producer value from a PDF's Info dictionary at byte level.
+    Uses equal-width padding (spaces) to avoid corrupting the XREF table
+    which relies on exact byte offsets."""
     import re
+
+    def _pad(m: re.Match) -> bytes:
+        # Preserve /Producer and delimiters, replace value with spaces
+        pre, mid, post = m.group(1), m.group(2), m.group(3)
+        return pre + b" " * len(mid) + post
 
     with open(path, "rb") as f:
         content = f.read()
 
-    # Match /Producer (value) — string literal
-    content = re.sub(rb"/Producer\s*\([^)]*\)", b"", content)
-    # Match /Producer <hex> — hex string alternative
-    content = re.sub(rb"/Producer\s*<[0-9A-Fa-f]*>", b"", content)
+    # /Producer (string value) — pad the string content with spaces
+    content = re.sub(rb"(/Producer\s*\()([^)]*)(\))", _pad, content)
+    # /Producer <hex value> — pad hexadecimal content with spaces
+    content = re.sub(rb"(/Producer\s*<)([0-9A-Fa-f]*)(>)", _pad, content)
 
     with open(path, "wb") as f:
         f.write(content)
@@ -336,6 +376,169 @@ def scan_document_warnings(filepath: str) -> list[str]:
 
 
 # ============================================================
+# Metadata reading (view original metadata before cleaning)
+# ============================================================
+
+
+def _read_office_metadata(filepath: str) -> dict:
+    """Extract metadata from an Office file's XML parts. Returns a dict of
+    {category: {chinese_label: value}} for display."""
+    result: dict[str, dict[str, str]] = {}
+
+    try:
+        with zipfile.ZipFile(filepath, "r") as z:
+            names = frozenset(z.namelist())
+
+            # --- core.xml -------------------------------------------------
+            if "docProps/core.xml" in names:
+                raw = z.read("docProps/core.xml").decode("utf-8", errors="replace")
+                fields = {
+                    "dc:title": "标题",
+                    "dc:subject": "主题",
+                    "dc:creator": "作者",
+                    "cp:keywords": "关键词",
+                    "dc:description": "描述",
+                    "cp:lastModifiedBy": "最后修改者",
+                    "cp:revision": "修订号",
+                    "cp:version": "版本",
+                    "cp:category": "类别",
+                    "cp:contentStatus": "内容状态",
+                    "dcterms:created": "创建时间",
+                    "dcterms:modified": "修改时间",
+                    "cp:lastPrinted": "最后打印",
+                }
+                core = {}
+                for tag, label in fields.items():
+                    # Match both <tag>text</tag> and <tag />
+                    m = re.search(
+                        r"<" + tag + r"(?:\s[^>]*)?>([^<]*)</" + tag + r">",
+                        raw,
+                    )
+                    if m:
+                        val = m.group(1).strip()
+                        if val:
+                            core[label] = val
+                if core:
+                    result["文档属性 (core.xml)"] = core
+
+            # --- app.xml --------------------------------------------------
+            if "docProps/app.xml" in names:
+                raw = z.read("docProps/app.xml").decode("utf-8", errors="replace")
+                fields = {
+                    "Application": "创建程序",
+                    "AppVersion": "程序版本",
+                    "Template": "模板",
+                    "TotalTime": "编辑时长(分钟)",
+                    "Pages": "页数",
+                    "Words": "字数",
+                    "Characters": "字符数",
+                    "Lines": "行数",
+                    "Paragraphs": "段落数",
+                    "Company": "公司",
+                    "Manager": "管理者",
+                    "ScaleCrop": "缩放裁剪",
+                    "LinksUpToDate": "链接最新",
+                    "SharedDoc": "共享文档",
+                    "HyperlinksChanged": "超链接已更改",
+                }
+                app = {}
+                for tag, label in fields.items():
+                    m = re.search(
+                        r"<" + tag + r"(?:\s[^>]*)?>([^<]*)</" + tag + r">",
+                        raw,
+                    )
+                    if m:
+                        val = m.group(1).strip()
+                        if val:
+                            app[label] = val
+                if app:
+                    result["扩展属性 (app.xml)"] = app
+
+            # --- custom.xml -----------------------------------------------
+            if "docProps/custom.xml" in names:
+                raw = z.read("docProps/custom.xml").decode("utf-8", errors="replace")
+                # Extract custom property names and values
+                props = {}
+                for m in re.finditer(
+                    r'name="([^"]+)".*?<vt:lpstr>([^<]*)</vt:lpstr>', raw
+                ):
+                    props[m.group(1)] = m.group(2)
+                for m in re.finditer(
+                    r'name="([^"]+)".*?<vt:i4>([^<]*)</vt:i4>', raw
+                ):
+                    props[m.group(1)] = m.group(2)
+                for m in re.finditer(
+                    r'name="([^"]+)".*?<vt:bool>([^<]*)</vt:bool>', raw
+                ):
+                    props[m.group(1)] = m.group(2)
+                for m in re.finditer(
+                    r'name="([^"]+)".*?<vt:r8>([^<]*)</vt:r8>', raw
+                ):
+                    props[m.group(1)] = m.group(2)
+                for m in re.finditer(
+                    r'name="([^"]+)".*?<vt:filetime>([^<]*)</vt:filetime>', raw
+                ):
+                    props[m.group(1)] = m.group(2)
+                if props:
+                    result["自定义属性 (custom.xml)"] = props
+
+    except Exception as exc:
+        result["错误"] = {"读取失败": str(exc)}
+
+    return result
+
+
+def _read_pdf_metadata(filepath: str) -> dict:
+    """Extract metadata from a PDF file."""
+    result: dict[str, dict[str, str]] = {}
+    if not HAS_PDF_SUPPORT:
+        return {"错误": {"PDF 支持": "未安装 pypdf/PyPDF2 库"}}
+
+    try:
+        with open(filepath, "rb") as f:
+            reader = PdfReader(f)
+            info = reader.metadata
+            if info:
+                pdf_fields = {
+                    "/Title": "标题",
+                    "/Author": "作者",
+                    "/Subject": "主题",
+                    "/Keywords": "关键词",
+                    "/Creator": "创建程序",
+                    "/Producer": "生成工具",
+                    "/CreationDate": "创建时间",
+                    "/ModDate": "修改时间",
+                }
+                pdf = {}
+                for key, label in pdf_fields.items():
+                    val = getattr(info, key[1:].lower(), None) or info.get(key, None)
+                    if val:
+                        # Clean up PDF date strings
+                        val_str = str(val)
+                        if val_str.startswith("D:"):
+                            val_str = val_str[2:].replace("'", "")
+                        pdf[label] = val_str
+                if pdf:
+                    result["PDF 属性"] = pdf
+    except Exception as exc:
+        result["错误"] = {"读取失败": str(exc)}
+
+    return result
+
+
+def read_metadata(filepath: str) -> dict:
+    """Read metadata from an Office file or PDF.
+    Returns {category: {label: value}} or {"错误": {reason: detail}}.
+    """
+    ext = Path(filepath).suffix.lower()
+    if ext == ".pdf":
+        return _read_pdf_metadata(filepath)
+    elif ext in OFFICE_EXTENSIONS:
+        return _read_office_metadata(filepath)
+    return {"错误": {"不支持": f"文件类型 {ext} 不支持"}}
+
+
+# ============================================================
 # GUI
 # ============================================================
 
@@ -343,7 +546,7 @@ def scan_document_warnings(filepath: str) -> list[str]:
 class MetadataCleanerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("元数据清除工具")
+        self.root.title(f"元数据清除工具 v{__version__}")
         self.root.geometry("620x480")
         self.root.minsize(500, 380)
 
@@ -403,6 +606,10 @@ class MetadataCleanerApp:
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.config(command=self.listbox.yview)
 
+        # Right-click context menu
+        self.listbox.bind("<Button-2>" if sys.platform == "darwin" else "<Button-3>",
+                          self._on_right_click)
+
         # Drag-and-drop registration
         if HAS_DND:
             self.listbox.drop_target_register(DND_FILES)
@@ -422,7 +629,10 @@ class MetadataCleanerApp:
         self.btn_remove.pack(side=tk.LEFT, padx=(0, 6))
 
         self.btn_clear = ttk.Button(btn_frame, text="清空列表", command=self._clear_files)
-        self.btn_clear.pack(side=tk.LEFT)
+        self.btn_clear.pack(side=tk.LEFT, padx=(0, 6))
+
+        self.btn_view = ttk.Button(btn_frame, text="查看元数据", command=self._view_metadata)
+        self.btn_view.pack(side=tk.LEFT)
 
         self.btn_clean = ttk.Button(
             btn_frame, text="清除元数据", command=self._start_cleaning
@@ -469,6 +679,91 @@ class MetadataCleanerApp:
         self.listbox.delete(0, tk.END)
         self.files.clear()
         self._refresh_status()
+
+    def _on_right_click(self, event):
+        """Show context menu on right-click."""
+        idx = self.listbox.nearest(event.y)
+        if idx >= 0 and idx < len(self.files):
+            self.listbox.selection_clear(0, tk.END)
+            self.listbox.selection_set(idx)
+
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="查看元数据", command=self._view_metadata)
+        menu.add_command(label="移除选中", command=self._remove_selected)
+        menu.add_command(label="清空列表", command=self._clear_files)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _view_metadata(self):
+        """Show metadata for selected file(s) in a popup window."""
+        selected = self.listbox.curselection()
+        if not selected:
+            messagebox.showwarning("提示", "请先在文件列表中选择一个文件。")
+            return
+
+        # Only show first selected file's metadata (to keep the dialog clean)
+        idx = selected[0]
+        filepath = self.files[idx]
+        fname = os.path.basename(filepath)
+
+        metadata = read_metadata(filepath)
+
+        # Build display window
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"元数据 — {fname}")
+        dlg.geometry("520x420")
+        dlg.minsize(400, 300)
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        # Header
+        header = ttk.Frame(dlg, padding="12")
+        header.pack(fill=tk.X)
+        ttk.Label(header, text=fname, font=("", 13, "bold")).pack(anchor=tk.W)
+        ttk.Label(
+            header,
+            text="以下为文件当前包含的元数据，可供清除前核对",
+            font=("", 9),
+        ).pack(anchor=tk.W, pady=(2, 0))
+
+        # Scrollable content
+        content = ttk.Frame(dlg, padding="12")
+        content.pack(fill=tk.BOTH, expand=True)
+
+        txt = tk.Text(
+            content,
+            wrap=tk.WORD,
+            font=("", 11),
+            padx=8,
+            pady=8,
+            state=tk.DISABLED,
+        )
+        sb = ttk.Scrollbar(content, command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Insert formatted metadata
+        txt.configure(state=tk.NORMAL)
+        if "错误" in metadata:
+            for key, val in metadata["错误"].items():
+                txt.insert(tk.END, f"\n  {key}: {val}\n")
+        else:
+            for category, fields in metadata.items():
+                txt.insert(tk.END, f"\n── {category} ──\n\n")
+                for label, value in fields.items():
+                    # Clean display: show D: dates nicely
+                    display_val = str(value)
+                    txt.insert(tk.END, f"  {label}:  {display_val}\n")
+        txt.configure(state=tk.DISABLED)
+
+        # Close button
+        btn_frame = ttk.Frame(dlg, padding="12")
+        btn_frame.pack(fill=tk.X)
+        ttk.Button(btn_frame, text="关闭", command=dlg.destroy).pack(side=tk.RIGHT)
 
     def _on_drop(self, event):
         """Handle file drop from OS file manager (requires tkinterdnd2)."""
@@ -600,7 +895,7 @@ class MetadataCleanerApp:
             )
 
     def _toggle_buttons(self, state):
-        for b in (self.btn_add, self.btn_remove, self.btn_clear, self.btn_clean):
+        for b in (self.btn_add, self.btn_remove, self.btn_clear, self.btn_view, self.btn_clean):
             b.config(state=state)
 
     def _on_close(self):
