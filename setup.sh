@@ -68,12 +68,12 @@ echo "[OK] pip 镜像已切换为清华大学源"
 echo ""
 echo "[安装] 正在安装依赖库 (defusedxml, pypdf)..."
 $PYTHON -m pip install --upgrade pip
-$PYTHON -m pip install defusedxml pypdf
+$PYTHON -m pip install defusedxml pypdf tkinterdnd2
 
 if [ $? -ne 0 ]; then
     echo ""
     echo "[警告] 默认镜像安装失败，切换备用镜像..."
-    $PYTHON -m pip install defusedxml pypdf -i https://mirrors.aliyun.com/pypi/simple/
+    $PYTHON -m pip install defusedxml pypdf tkinterdnd2 -i https://mirrors.aliyun.com/pypi/simple/
 fi
 
 # ---- Done ----

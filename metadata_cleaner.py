@@ -18,6 +18,16 @@ from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 from threading import Thread
 
+# Optional drag-and-drop support
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+
+    HAS_DND = True
+except ImportError:
+    HAS_DND = False
+    TkinterDnD = None  # type: ignore[assignment]
+    DND_FILES = None
+
 # ============================================================
 # Configuration
 # ============================================================
@@ -239,32 +249,38 @@ def scan_document_warnings(filepath: str) -> list[str]:
             names = z.namelist()
             name_set = frozenset(names)
 
-            # -- Word / WPS Writer comments ---------------------------------
+            # -- Word comments: file must exist AND contain actual <w:comment elements --
             if "word/comments.xml" in name_set:
-                warnings.append("批注")
+                raw = z.read("word/comments.xml")
+                if b"<w:comment " in raw or b"<w:comment>" in raw or b"<w:comment/" in raw:
+                    warnings.append("批注")
 
-            # -- Excel / WPS Spreadsheet comments ---------------------------
+            # -- Excel comments --------------------------------------------------
             for n in names:
                 if n.startswith("xl/comments") and n.endswith(".xml"):
-                    if "批注" not in warnings:
-                        warnings.append("批注")
+                    raw = z.read(n)
+                    if raw.strip():
+                        if "批注" not in warnings:
+                            warnings.append("批注")
                     break
 
-            # -- PowerPoint / WPS Presentation comments ---------------------
+            # -- PowerPoint comments --------------------------------------------
             for n in names:
                 if n.startswith("ppt/comments/") and n.endswith(".xml"):
-                    if "批注" not in warnings:
-                        warnings.append("批注")
+                    raw = z.read(n)
+                    if raw.strip():
+                        if "批注" not in warnings:
+                            warnings.append("批注")
                     break
 
-            # -- Word tracked changes (w:ins / w:del in document.xml) -----
+            # -- Word tracked changes: exact XML tag (not substring) ------------
             doc_xml_path = "word/document.xml"
             if doc_xml_path in name_set:
-                # Read in 64 KiB chunks — large enough to catch early revisions
                 reader = z.open(doc_xml_path, "r")
                 chunk = reader.read(65536)
                 reader.close()
-                if b"w:ins" in chunk or b"w:del" in chunk:
+                if b"<w:ins " in chunk or b"<w:del " in chunk or \
+                   b"<w:ins>" in chunk or b"<w:del>" in chunk:
                     warnings.append("修订记录")
 
     except Exception:
@@ -341,6 +357,14 @@ class MetadataCleanerApp:
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.config(command=self.listbox.yview)
 
+        # Drag-and-drop registration
+        if HAS_DND:
+            self.listbox.drop_target_register(DND_FILES)
+            self.listbox.dnd_bind("<<Drop>>", self._on_drop)
+            # Also register the whole window for drops
+            self.root.drop_target_register(DND_FILES)
+            self.root.dnd_bind("<<Drop>>", self._on_drop)
+
         # Buttons
         btn_frame = ttk.Frame(main)
         btn_frame.pack(fill=tk.X, pady=(0, 10))
@@ -399,6 +423,45 @@ class MetadataCleanerApp:
         self.listbox.delete(0, tk.END)
         self.files.clear()
         self._refresh_status()
+
+    def _on_drop(self, event):
+        """Handle file drop from OS file manager (requires tkinterdnd2)."""
+        raw = event.data
+        # Parse file paths from tkinterdnd2 format:
+        #   Windows: {C:/path/file.docx} {C:/path/file.pdf}
+        #   macOS:   /path/file.docx /path/file.pdf   (space-separated, brace-wrapped)
+        paths: list[str] = []
+        brace_depth = 0
+        current = ""
+        for ch in raw:
+            if ch == "{":
+                brace_depth += 1
+                continue
+            elif ch == "}":
+                brace_depth -= 1
+                if brace_depth == 0 and current:
+                    paths.append(current)
+                    current = ""
+                continue
+            elif ch == " " and brace_depth == 0:
+                if current:
+                    paths.append(current)
+                    current = ""
+                continue
+            current += ch
+        if current:
+            paths.append(current)
+
+        added = 0
+        for p in paths:
+            p = p.strip()
+            if p and os.path.isfile(p) and p not in self.files:
+                self.files.append(p)
+                self.listbox.insert(tk.END, os.path.basename(p))
+                added += 1
+
+        if added:
+            self._refresh_status()
 
     def _refresh_status(self):
         n = len(self.files)
@@ -550,7 +613,10 @@ def main():
     if len(sys.argv) > 1:
         cli_mode(sys.argv[1:])
     else:
-        root = tk.Tk()
+        if HAS_DND:
+            root = TkinterDnD.Tk()
+        else:
+            root = tk.Tk()
         MetadataCleanerApp(root)
         root.mainloop()
 

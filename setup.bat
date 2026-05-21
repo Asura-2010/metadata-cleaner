@@ -90,15 +90,15 @@ python -m pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simp
 echo  [OK] pip 镜像已切换为清华大学源
 
 echo.
-echo  [安装] 正在安装依赖库 (defusedxml, pypdf)...
+echo  [安装] 正在安装依赖库 (defusedxml, pypdf, tkinterdnd2)...
 echo.
 python -m pip install --upgrade pip
-python -m pip install defusedxml pypdf
+python -m pip install defusedxml pypdf tkinterdnd2
 
 if %errorlevel% neq 0 (
     echo.
     echo  [警告] 安装失败，尝试切换到备用镜像...
-    python -m pip install defusedxml pypdf -i https://mirrors.aliyun.com/pypi/simple/
+    python -m pip install defusedxml pypdf tkinterdnd2 -i https://mirrors.aliyun.com/pypi/simple/
 )
 
 echo.
