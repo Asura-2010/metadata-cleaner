@@ -77,13 +77,18 @@ _CORE_FIELDS = [
     ("{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}lastModifiedBy", "clear", None),
     ("{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}version", "clear", None),
     ("{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}revision", "set", "1"),
-    ("{http://purl.org/dc/terms/}created", "remove", None),
-    ("{http://purl.org/dc/terms/}modified", "remove", None),
+    ("{http://purl.org/dc/terms/}created", "clear", None),
+    ("{http://purl.org/dc/terms/}modified", "clear", None),
 ]
 
 
 def _clean_core_xml(xml_bytes: bytes) -> bytes:
-    """Parse core.xml, strip/rewrite metadata fields, return cleaned XML bytes."""
+    """Parse core.xml, strip/rewrite metadata fields, return cleaned XML bytes.
+
+    Elements are cleared (not removed) to preserve namespace declarations
+    that Word requires.  The XML declaration is normalised to double-quoted
+    attributes with standalone='yes' to match Office conventions.
+    """
     for prefix, uri in NS_CORE.items():
         register_namespace(prefix, uri)
 
@@ -95,10 +100,14 @@ def _clean_core_xml(xml_bytes: bytes) -> bytes:
                 elem.text = ""
             elif action == "set":
                 elem.text = value
-            elif action == "remove":
-                root.remove(elem)
 
-    return ET.tostring(root, encoding="UTF-8", xml_declaration=True)
+    raw = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
+    # Normalise the XML declaration to Office-compatible format
+    raw = raw.replace(
+        b"<?xml version='1.0' encoding='UTF-8'?>",
+        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    )
+    return raw
 
 
 # Fields in app.xml — the metadata we strip from extended properties
@@ -118,7 +127,12 @@ def _clean_app_xml(xml_bytes: bytes) -> bytes:
         for elem in root.findall(f"{{{NS_APP}}}{field}"):
             elem.text = ""
 
-    return ET.tostring(root, encoding="UTF-8", xml_declaration=True)
+    raw = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
+    raw = raw.replace(
+        b"<?xml version='1.0' encoding='UTF-8'?>",
+        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    )
+    return raw
 
 
 def clean_office_file(filepath: str) -> tuple:
@@ -197,6 +211,9 @@ def clean_pdf_file(filepath: str) -> tuple:
         with open(tmp_path, "wb") as f:
             writer.write(f)
 
+        # Strip the /Producer entry that pypdf/PyPDF2 injects automatically
+        _strip_pdf_producer(tmp_path)
+
         os.replace(tmp_path, filepath)
         return True, None
 
@@ -208,6 +225,22 @@ def clean_pdf_file(filepath: str) -> tuple:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         return False, str(exc)
+
+
+def _strip_pdf_producer(path: str) -> None:
+    """Remove /Producer entry from a PDF's Info dictionary at byte level."""
+    import re
+
+    with open(path, "rb") as f:
+        content = f.read()
+
+    # Match /Producer (value) — string literal
+    content = re.sub(rb"/Producer\s*\([^)]*\)", b"", content)
+    # Match /Producer <hex> — hex string alternative
+    content = re.sub(rb"/Producer\s*<[0-9A-Fa-f]*>", b"", content)
+
+    with open(path, "wb") as f:
+        f.write(content)
 
 
 # ============================================================
