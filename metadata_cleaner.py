@@ -5,6 +5,7 @@ Works on Windows, macOS, and Linux.
 """
 
 import os
+import re
 import sys
 import shutil
 import zipfile
@@ -103,9 +104,12 @@ def _clean_core_xml(xml_bytes: bytes) -> bytes:
 
     raw = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
     # Normalise the XML declaration to Office-compatible format
-    raw = raw.replace(
-        b"<?xml version='1.0' encoding='UTF-8'?>",
+    # (regex handles varying quote styles across Python versions)
+    raw = re.sub(
+        rb"<\?xml[^>]+\?>",
         b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        raw,
+        count=1,
     )
     return raw
 
@@ -116,6 +120,14 @@ _APP_FIELDS_TO_CLEAR = [
     "Manager",
     "TotalTime",
 ]
+
+# Minimal valid custom.xml to replace dropped custom properties
+_EMPTY_CUSTOM_XML = (
+    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    b'<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"'
+    b' xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
+    b'</Properties>'
+)
 
 
 def _clean_app_xml(xml_bytes: bytes) -> bytes:
@@ -158,9 +170,10 @@ def clean_office_file(filepath: str) -> tuple:
                 elif name == "docProps/app.xml":
                     cleaned = _clean_app_xml(zin.read(name))
                     zout.writestr(item, cleaned)
-                # Drop custom.xml entirely — can contain user paths / identifiers
+                # Replace custom.xml with an empty skeleton — dropping it
+                # would break _rels/.rels references, causing Office errors
                 elif name == "docProps/custom.xml":
-                    continue
+                    zout.writestr(item, _EMPTY_CUSTOM_XML)
                 # Stream everything else as-is (no memory accumulation)
                 else:
                     zout.writestr(item, zin.read(name))
@@ -199,17 +212,18 @@ def clean_pdf_file(filepath: str) -> tuple:
     tmp_path = filepath + ".tmp"
 
     try:
-        reader = PdfReader(filepath)
-        writer = PdfWriter()
+        with open(filepath, "rb") as fin:
+            reader = PdfReader(fin)
+            writer = PdfWriter()
 
-        for page in reader.pages:
-            writer.add_page(page)
+            for page in reader.pages:
+                writer.add_page(page)
 
-        # Explicitly overwrite metadata to clear XMP /Info remnants
-        writer.add_metadata({})
+            # Explicitly overwrite metadata to clear XMP /Info remnants
+            writer.add_metadata({})
 
-        with open(tmp_path, "wb") as f:
-            writer.write(f)
+        with open(tmp_path, "wb") as fout:
+            writer.write(fout)
 
         # Strip the /Producer entry that pypdf/PyPDF2 injects automatically
         _strip_pdf_producer(tmp_path)
@@ -309,9 +323,8 @@ def scan_document_warnings(filepath: str) -> list[str]:
             # -- Word tracked changes: exact XML tag (not substring) ------------
             doc_xml_path = "word/document.xml"
             if doc_xml_path in name_set:
-                reader = z.open(doc_xml_path, "r")
-                chunk = reader.read(65536)
-                reader.close()
+                with z.open(doc_xml_path, "r") as fh:
+                    chunk = fh.read(65536)
                 if b"<w:ins " in chunk or b"<w:del " in chunk or \
                    b"<w:ins>" in chunk or b"<w:del>" in chunk:
                     warnings.append("修订记录")
