@@ -4,12 +4,13 @@ Metadata Cleaner - Cross-platform tool to remove metadata from Office files & PD
 Works on Windows, macOS, and Linux.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 import os
 import re
 import sys
 import shutil
+import tempfile
 import zipfile
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -34,8 +35,11 @@ SUPPORTED_EXTENSIONS = {
     ".docx", ".xlsx", ".pptx",     # Microsoft Office
     ".wps",  ".et",   ".dps",      # WPS Office (new XML-based format)
     ".pdf",
+    ".png", ".jpg", ".jpeg",       # Standalone images
+    ".gif", ".bmp", ".tiff", ".tif", ".webp",
 }
 OFFICE_EXTENSIONS = {".docx", ".xlsx", ".pptx", ".wps", ".et", ".dps"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp"}
 
 # Try importing pypdf (modern) then PyPDF2 (legacy) for PDF support
 try:
@@ -82,7 +86,11 @@ def _strip_image_metadata(data: bytes) -> bytes:
         out = io.BytesIO()
         # Re-save without metadata: strip EXIF, PNG text chunks, etc.
         if fmt == "JPEG":
-            img.save(out, format="JPEG", quality="keep")
+            try:
+                img.save(out, format="JPEG", quality="keep")
+            except ValueError:
+                # quality="keep" requires quantization tables; degrade gracefully
+                img.save(out, format="JPEG", quality=95)
         elif fmt == "PNG":
             img.save(out, format="PNG")
         elif fmt == "GIF":
@@ -145,13 +153,10 @@ def _clean_core_xml(xml_bytes: bytes) -> bytes:
             data,
         )
         data = re.sub(
-            rb"<" + prefix.encode() + rb":" + local.encode() + rb"\s[^>]*/>",
+            rb"<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?/>",
             b"",
             data,
         )
-
-    # Clean up xsi:type which only existed on the removed date elements
-    data = re.sub(rb'\s+xsi:type=(?:"[^"]*"|\'[^\']*\')', b"", data)
 
     # Set revision to 1 (must be a valid integer string)
     data = re.sub(
@@ -213,6 +218,16 @@ def _clean_app_xml(xml_bytes: bytes) -> bytes:
     return data
 
 
+def _clean_document_xml(xml_bytes: bytes) -> bytes:
+    """Clear descr attributes in document.xml (wp:docPr and pic:cNvPr elements).
+    Word stores the source file path of pasted/dragged images here — this is
+    how Acrobat shows original file paths when hovering over images in a PDF
+    converted from Word."""
+    # Remove descr="C:\Users\...\WeChat Files\...png" attributes
+    data = re.sub(rb'\s+descr="[^"]*"', b"", xml_bytes)
+    return data
+
+
 def clean_office_file(filepath: str) -> tuple:
     """
     Remove metadata from a .docx / .xlsx / .pptx / .wps / .et / .dps file.
@@ -220,7 +235,9 @@ def clean_office_file(filepath: str) -> tuple:
     Uses atomic temp-file replacement to prevent data loss on interruption.
     Returns (success: bool, error_message: str|None).
     """
-    tmp_path = filepath + ".tmp"
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(filepath),
+                                     prefix=".mdc-", suffix=".tmp")
+    os.close(fd)
 
     try:
         with zipfile.ZipFile(filepath, "r") as zin, \
@@ -236,10 +253,17 @@ def clean_office_file(filepath: str) -> tuple:
                 elif name == "docProps/app.xml":
                     cleaned = _clean_app_xml(zin.read(name))
                     zout.writestr(item, cleaned)
-                # Replace custom.xml with an empty skeleton — dropping it
-                # would break _rels/.rels references, causing Office errors
+                # Clean custom.xml — replace with empty skeleton
                 elif name == "docProps/custom.xml":
                     zout.writestr(item, _EMPTY_CUSTOM_XML)
+                # Clean image source paths from document/slide/sheet XML
+                # Word stores paste-source paths in descr attributes of
+                # wp:docPr / pic:cNvPr elements
+                elif (name == "word/document.xml"
+                      or name.startswith("ppt/slides/slide")
+                      or name.startswith("xl/worksheets/sheet")):
+                    cleaned = _clean_document_xml(zin.read(name))
+                    zout.writestr(item, cleaned)
                 # Strip EXIF/metadata from embedded images (screenshots, photos)
                 elif name.lower().endswith((".png", ".jpg", ".jpeg", ".gif",
                                             ".bmp", ".tiff", ".tif", ".webp")):
@@ -248,7 +272,7 @@ def clean_office_file(filepath: str) -> tuple:
                 # Stream everything else as-is (no memory accumulation)
                 else:
                     with zin.open(item) as f_in, \
-                         zout.open(item.filename, "w") as f_out:
+                         zout.open(item, "w") as f_out:
                         shutil.copyfileobj(f_in, f_out)
 
         # Preserve original file permissions before atomic replace
@@ -259,18 +283,42 @@ def clean_office_file(filepath: str) -> tuple:
         os.replace(tmp_path, filepath)
         return True, None
 
-    except PermissionError:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        return False, "文件正被其他程序(如 Office/WPS)占用，请先关闭该文件再试。"
-    except zipfile.BadZipFile:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        return False, "文件已损坏或不是有效的 Office/WPS 文档（旧版二进制格式不支持）。"
     except Exception as exc:
         if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        if isinstance(exc, PermissionError):
+            return False, "文件正被其他程序(如 Office/WPS)占用，请先关闭该文件再试。"
+        if isinstance(exc, zipfile.BadZipFile):
+            return False, "文件已损坏或不是有效的 Office/WPS 文档（旧版二进制格式不支持）。"
         return False, str(exc)
+
+
+def _strip_pdf_alt_text(path: str) -> None:
+    """Clear /Alt text from a PDF's structure tree to remove image source
+    paths.  Word converts docx descr attributes to PDF /Alt entries encoded
+    in UTF-16BE.  Uses equal-width padding to keep XREF byte offsets valid."""
+    import re
+
+    def _pad_utf16(m: re.Match) -> bytes:
+        prefix = m.group(1)   # /Alt(BOM)
+        text = m.group(2)     # the UTF-16BE string content
+        suffix = m.group(3)   # )
+        # Replace each UTF-16 code unit (2 bytes) with U+0020 (space = \x00 )
+        padding = b"\x00 " * (len(text) // 2)
+        return prefix + padding + suffix
+
+    with open(path, "rb") as f:
+        content = f.read()
+
+    # /Alt with UTF-16BE BOM — the BOM eats itself (2 bytes), then the
+    # rest of the string inside parentheses is padded with null+space
+    content = re.sub(rb"(/Alt\(\xfe\xff)((?:[^\\]|\\.)*?)(\))", _pad_utf16, content)
+
+    with open(path, "wb") as f:
+        f.write(content)
 
 
 # ============================================================
@@ -286,24 +334,34 @@ def clean_pdf_file(filepath: str) -> tuple:
     if not HAS_PDF_SUPPORT:
         return False, "PDF 组件未安装，请运行 setup.bat (Windows) 或 setup.sh (macOS) 安装依赖。"
 
-    tmp_path = filepath + ".tmp"
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(filepath),
+                                     prefix=".mdc-", suffix=".tmp")
+    os.close(fd)
 
     try:
         with open(filepath, "rb") as fin:
             reader = PdfReader(fin)
             writer = PdfWriter()
 
-            for page in reader.pages:
-                writer.add_page(page)
+            # clone_document_from_reader preserves bookmarks, links, forms
+            # (available in pypdf >= 3.1.0 and PyPDF2 >= 2.0)
+            if hasattr(writer, "clone_document_from_reader"):
+                writer.clone_document_from_reader(reader)
+            else:
+                for page in reader.pages:
+                    writer.add_page(page)
 
-            # Explicitly overwrite metadata to clear XMP /Info remnants
-            writer.add_metadata({})
+            # Override metadata — /Producer set to space prevents pypdf
+            # from auto-injecting its own version string
+            writer.add_metadata({"/Producer": " "})
 
-        with open(tmp_path, "wb") as fout:
-            writer.write(fout)
+            # Write must stay inside the 'fin' with-block — pypdf uses
+            # lazy reading and the source must remain open during write
+            with open(tmp_path, "wb") as fout:
+                writer.write(fout)
 
-        # Strip the /Producer entry that pypdf/PyPDF2 injects automatically
-        _strip_pdf_producer(tmp_path)
+        # Clear image source paths from structure tree /Alt entries
+        _strip_pdf_alt_text(tmp_path)
 
         try:
             shutil.copymode(filepath, tmp_path)
@@ -312,42 +370,57 @@ def clean_pdf_file(filepath: str) -> tuple:
         os.replace(tmp_path, filepath)
         return True, None
 
-    except PermissionError:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        return False, "文件正被其他程序占用，请先关闭该 PDF 再试。"
     except Exception as exc:
         if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        if isinstance(exc, PermissionError):
+            return False, "文件正被其他程序占用，请先关闭该 PDF 再试。"
         return False, str(exc)
 
-
-def _strip_pdf_producer(path: str) -> None:
-    """Remove /Producer value from a PDF's Info dictionary at byte level.
-    Uses equal-width padding (spaces) to avoid corrupting the XREF table
-    which relies on exact byte offsets."""
-    import re
-
-    def _pad(m: re.Match) -> bytes:
-        # Preserve /Producer and delimiters, replace value with spaces
-        pre, mid, post = m.group(1), m.group(2), m.group(3)
-        return pre + b" " * len(mid) + post
-
-    with open(path, "rb") as f:
-        content = f.read()
-
-    # /Producer (string value) — pad the string content with spaces
-    content = re.sub(rb"(/Producer\s*\()([^)]*)(\))", _pad, content)
-    # /Producer <hex value> — pad hexadecimal content with spaces
-    content = re.sub(rb"(/Producer\s*<)([0-9A-Fa-f]*)(>)", _pad, content)
-
-    with open(path, "wb") as f:
-        f.write(content)
 
 
 # ============================================================
 # Unified entry point
 # ============================================================
+
+
+def clean_image_file(filepath: str) -> tuple:
+    """
+    Remove metadata from a standalone image file (PNG / JPEG / GIF / etc).
+    Uses atomic temp-file replacement. Returns (success, error_message).
+    """
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(filepath),
+                                     prefix=".mdc-", suffix=".tmp")
+    os.close(fd)
+
+    try:
+        with open(filepath, "rb") as f:
+            original = f.read()
+
+        cleaned = _strip_image_metadata(original)
+
+        with open(tmp_path, "wb") as f:
+            f.write(cleaned)
+
+        try:
+            shutil.copymode(filepath, tmp_path)
+        except OSError:
+            pass
+        os.replace(tmp_path, filepath)
+        return True, None
+
+    except Exception as exc:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        if isinstance(exc, PermissionError):
+            return False, "文件正被其他程序占用，请先关闭再试。"
+        return False, str(exc)
 
 
 def clean_file(filepath: str) -> tuple:
@@ -359,6 +432,8 @@ def clean_file(filepath: str) -> tuple:
 
     if ext == ".pdf":
         return clean_pdf_file(filepath)
+    elif ext in IMAGE_EXTENSIONS:
+        return clean_image_file(filepath)
     else:
         return clean_office_file(filepath)
 
@@ -412,10 +487,11 @@ def scan_document_warnings(filepath: str) -> list[str]:
             doc_xml_path = "word/document.xml"
             if doc_xml_path in name_set:
                 with z.open(doc_xml_path, "r") as fh:
-                    chunk = fh.read(65536)
-                if b"<w:ins " in chunk or b"<w:del " in chunk or \
-                   b"<w:ins>" in chunk or b"<w:del>" in chunk:
-                    warnings.append("修订记录")
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        if b"<w:ins " in chunk or b"<w:del " in chunk or \
+                           b"<w:ins>" in chunk or b"<w:del>" in chunk:
+                            warnings.append("修订记录")
+                            break
 
     except Exception:
         pass  # scanning is best-effort; don't block the user over it
@@ -548,6 +624,25 @@ def _read_office_metadata(filepath: str) -> dict:
             if image_meta:
                 result["嵌入图片元数据"] = image_meta
 
+            # --- image source paths in document/slide/sheet XML -------------
+            descr_paths: dict[str, str] = {}
+            for name in z.namelist():
+                if (name == "word/document.xml"
+                        or name.startswith("ppt/slides/slide")
+                        or name.startswith("xl/worksheets/sheet")):
+                    raw = z.read(name).decode("utf-8", errors="replace")
+                    for m in re.finditer(r'descr="([^"]+)"', raw):
+                        path = m.group(1)
+                        # Only collect paths that look like file paths
+                        if "\\" in path or "/" in path:
+                            # Use parent element name as key
+                            ctx = raw[max(0, m.start() - 200):m.start()]
+                            name_m = re.search(r'name="([^"]+)"', ctx)
+                            img_name = name_m.group(1) if name_m else "?"
+                            descr_paths[img_name] = path
+            if descr_paths:
+                result["图片来源路径 (document.xml)"] = descr_paths
+
     except Exception as exc:
         result["错误"] = {"读取失败": str(exc)}
 
@@ -567,7 +662,9 @@ def _read_image_metadata(data: bytes) -> dict[str, str]:
         if img.format == "PNG":
             for key, val in (img.text or {}).items():
                 info[key] = val
-        elif img.format in ("JPEG", "TIFF"):
+
+        # EXIF may be present in PNG (eXIf chunk), JPEG, and TIFF
+        if img.format in ("PNG", "JPEG", "TIFF"):
             exif = img.getexif()
             if exif:
                 for tag_id, val in exif.items():
@@ -575,7 +672,8 @@ def _read_image_metadata(data: bytes) -> dict[str, str]:
                     tag_name = TAGS.get(tag_id, f"Tag{tag_id}")
                     if val and tag_name not in ("ExifOffset", "MakerNote"):
                         info[tag_name] = str(val).strip()
-        elif img.format == "GIF":
+
+        if img.format == "GIF":
             if hasattr(img, "info"):
                 for key in ("comment", "duration"):
                     val = img.info.get(key)
@@ -625,8 +723,24 @@ def _read_pdf_metadata(filepath: str) -> dict:
     return result
 
 
+def _read_image_file_metadata(filepath: str) -> dict:
+    """Extract metadata from a standalone image file."""
+    result: dict[str, dict[str, str]] = {}
+    try:
+        with open(filepath, "rb") as f:
+            data = f.read()
+        info = _read_image_metadata(data)
+        if info:
+            result["图片元数据"] = info
+        else:
+            result["图片元数据"] = {"（无）": "此图片不含元数据"}
+    except Exception as exc:
+        result["错误"] = {"读取失败": str(exc)}
+    return result
+
+
 def read_metadata(filepath: str) -> dict:
-    """Read metadata from an Office file or PDF.
+    """Read metadata from an Office file, PDF, or standalone image.
     Returns {category: {label: value}} or {"错误": {reason: detail}}.
     """
     ext = Path(filepath).suffix.lower()
@@ -634,6 +748,8 @@ def read_metadata(filepath: str) -> dict:
         return _read_pdf_metadata(filepath)
     elif ext in OFFICE_EXTENSIONS:
         return _read_office_metadata(filepath)
+    elif ext in IMAGE_EXTENSIONS:
+        return _read_image_file_metadata(filepath)
     return {"错误": {"不支持": f"文件类型 {ext} 不支持"}}
 
 
@@ -753,11 +869,12 @@ class MetadataCleanerApp:
 
     def _add_files(self):
         types = [
-            ("支持的文件", "*.docx *.xlsx *.pptx *.wps *.et *.dps *.pdf"),
+            ("支持的文件", "*.docx *.xlsx *.pptx *.wps *.et *.dps *.pdf *.png *.jpg *.jpeg *.gif *.bmp *.tiff *.tif *.webp"),
             ("Word / WPS 文档", "*.docx *.wps"),
             ("Excel / WPS 表格", "*.xlsx *.et"),
             ("PowerPoint / WPS 演示", "*.pptx *.dps"),
             ("PDF 文件", "*.pdf"),
+            ("图片文件", "*.png *.jpg *.jpeg *.gif *.bmp *.tiff *.tif *.webp"),
         ]
         paths = filedialog.askopenfilenames(title="选择文件", filetypes=types)
 
@@ -866,31 +983,7 @@ class MetadataCleanerApp:
 
     def _on_drop(self, event):
         """Handle file drop from OS file manager (requires tkinterdnd2)."""
-        raw = event.data
-        # Parse file paths from tkinterdnd2 format:
-        #   Windows: {C:/path/file.docx} {C:/path/file.pdf}
-        #   macOS:   /path/file.docx /path/file.pdf   (space-separated, brace-wrapped)
-        paths: list[str] = []
-        brace_depth = 0
-        current = ""
-        for ch in raw:
-            if ch == "{":
-                brace_depth += 1
-                continue
-            elif ch == "}":
-                brace_depth -= 1
-                if brace_depth == 0 and current:
-                    paths.append(current)
-                    current = ""
-                continue
-            elif ch == " " and brace_depth == 0:
-                if current:
-                    paths.append(current)
-                    current = ""
-                continue
-            current += ch
-        if current:
-            paths.append(current)
+        paths = self.root.tk.splitlist(event.data)
 
         added = 0
         for p in paths:

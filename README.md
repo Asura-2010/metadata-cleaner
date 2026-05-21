@@ -1,4 +1,4 @@
-# 文档元数据清除工具 v1.0.0
+# 文档元数据清除工具 v1.1.0
 
 > 一键清除 Office / WPS / PDF 文件中隐藏的个人和公司信息
 
@@ -19,10 +19,20 @@
 | 标题 / 主题 / 描述 | 机密报告、财务数据 |
 | 编辑时长 | 1071 分钟 |
 | 自定义属性（custom.xml） | 第三方插件写入的路径、标识等 |
+| 图片源路径（document.xml descr） | C:\Users\张三\WeChat\image.png |
+| PDF 结构树 /Alt 文本 | 图片路径的 UTF-16BE 编码副本 |
 
 **嵌入图片的元数据：**
 
 从微信、QQ 等渠道粘贴到文档中的截图，会携带原始文件路径、创建软件等信息。工具会自动清除这些隐藏信息（支持 PNG / JPEG / GIF / BMP / TIFF / WebP）。
+
+**图片文件独立处理：**
+
+除了文档中的嵌入图片，工具现在也支持直接处理独立图片文件（.jpg / .png / .gif / .bmp / .tiff / .webp），可查看和清除其 EXIF、XMP、PNG 文本块等元数据。
+
+**PDF 图片路径清洗：**
+
+Word 转 PDF 时，文档中的图片源路径会被写入 PDF 结构树（/StructTreeRoot → /Alt 条目）。v1.1 支持清除这些隐藏路径，防止通过 Acrobat 等工具查看时泄露原始文件路径。
 
 **查看元数据：**
 
@@ -44,8 +54,8 @@
 
 | 平台 | 下载 | 说明 |
 |------|------|------|
-| **macOS** | [MetadataCleaner-1.0.0.dmg](https://github.com/Asura-2010/metadata-cleaner/releases/latest) | 打开后拖入 Applications，开箱即用 |
-| **Windows** | [MetadataCleaner-Setup-1.0.0.exe](https://github.com/Asura-2010/metadata-cleaner/releases/latest) | 运行安装程序，创建桌面快捷方式 |
+| **macOS** | [MetadataCleaner-1.1.0.dmg](https://github.com/Asura-2010/metadata-cleaner/releases/latest) | 打开后拖入 Applications，开箱即用 |
+| **Windows** | [MetadataCleaner-Setup-1.1.0.exe](https://github.com/Asura-2010/metadata-cleaner/releases/latest) | 运行安装程序，创建桌面快捷方式 |
 
 > 以上安装包已包含 Python 和所有依赖，无需单独安装 Python。
 
@@ -111,6 +121,7 @@ python3 metadata_cleaner.py *.docx *.xlsx *.pptx *.wps *.pdf
 | WPS 表格 | `.et` |
 | WPS 演示 | `.dps` |
 | PDF 文件 | `.pdf` |
+| 图片文件 | `.jpg` `.png` `.gif` `.bmp` `.tiff` `.webp` |
 
 > 旧版二进制格式（`.doc` / `.xls` / `.ppt` / 旧 `.wps`）不支持。请先"另存为"新格式。
 
@@ -122,6 +133,8 @@ python3 metadata_cleaner.py *.docx *.xlsx *.pptx *.wps *.pdf
 | **流式处理** | 逐条读写 ZIP，500MB+ 文件不会 OOM |
 | **权限保留** | 替换前同步原始文件权限，避免权限变更 |
 | **正则清洗** | 直接修改 XML 文本，保留原始结构（命名空间、换行符等），Word/WPS 严格校验通过 |
+| **图片源路径** | 清除 document.xml 中 descr 属性里的图片源路径，以及 PDF 结构树 /Alt 条目 |
+| **二进制 Padding** | PDF /Alt 文本使用等宽零字符替换，保持文件字节偏移不变 |
 | **分类报错** | 权限不足、格式不支持等均有中文提示 |
 
 ## 依赖
