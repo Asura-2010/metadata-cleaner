@@ -40,7 +40,7 @@
 ### Windows
 
 ```
-双击 setup.bat  →  安装依赖  →  双击 run.bat
+双击 setup.bat  →  安装依赖  →  双击 run.vbs（静默启动）
 ```
 
 如果未安装 Python，脚本会弹出对话框引导你从清华镜像下载（国内速度快）。安装 Python 时**务必勾选**「Add Python to PATH」。
@@ -57,8 +57,8 @@
 
 ### 图形界面（单文件 / 批量均可）
 
-- **macOS**：双击 `run.command`
-- **Windows**：双击 `run.bat`
+- **macOS**：双击 `run.command`（终端自动关闭）
+- **Windows**：双击 `run.vbs`（静默启动，无窗口）
 
 1. 点击 **「添加文件」**，选择要处理的文件（按住 `Ctrl` 或 `Cmd` 可多选，**支持批量**）
 2. 点击 **「清除元数据」**
