@@ -51,6 +51,49 @@ except ImportError:
         HAS_PDF_SUPPORT = False
 
 
+# Try importing Pillow for image metadata stripping (optional)
+try:
+    from PIL import Image
+
+    HAS_IMAGE_SUPPORT = True
+except ImportError:
+    HAS_IMAGE_SUPPORT = False
+
+
+# ============================================================
+# Image metadata cleaning (embedded in Office files)
+# ============================================================
+
+
+def _strip_image_metadata(data: bytes) -> bytes:
+    """Remove EXIF, PNG text chunks, and other metadata from image bytes.
+    Returns cleaned bytes, or original if Pillow is unavailable or fails."""
+    if not HAS_IMAGE_SUPPORT:
+        return data
+
+    try:
+        import io
+
+        img = Image.open(io.BytesIO(data))
+        fmt = img.format
+        if fmt not in ("PNG", "JPEG", "TIFF", "BMP", "GIF"):
+            return data
+
+        out = io.BytesIO()
+        # Re-save without metadata: strip EXIF, PNG text chunks, etc.
+        if fmt == "JPEG":
+            img.save(out, format="JPEG", quality="keep")
+        elif fmt == "PNG":
+            img.save(out, format="PNG")
+        elif fmt == "GIF":
+            img.save(out, format="GIF")
+        else:
+            img.save(out, format=fmt)
+        return out.getvalue()
+    except Exception:
+        return data  # best-effort
+
+
 # ============================================================
 # Office file metadata cleaning
 # ============================================================
@@ -197,6 +240,11 @@ def clean_office_file(filepath: str) -> tuple:
                 # would break _rels/.rels references, causing Office errors
                 elif name == "docProps/custom.xml":
                     zout.writestr(item, _EMPTY_CUSTOM_XML)
+                # Strip EXIF/metadata from embedded images (screenshots, photos)
+                elif name.lower().endswith((".png", ".jpg", ".jpeg", ".gif",
+                                            ".bmp", ".tiff", ".tif", ".webp")):
+                    cleaned = _strip_image_metadata(zin.read(name))
+                    zout.writestr(item, cleaned)
                 # Stream everything else as-is (no memory accumulation)
                 else:
                     with zin.open(item) as f_in, \
