@@ -104,8 +104,9 @@ PDF 中的超链接注释（/URI），包含文档中嵌入的所有网址。
 | JPEG | EXIF（拍摄设备、GPS、时间戳）、XMP、IPTC、ICC 配置文件 |
 | PNG | EXIF（eXIf chunk）、tEXt/iTXt/zTXt 文本块（软件标识、原始文件名） |
 | GIF / BMP / TIFF / WebP | 各自的元数据字段 |
+| HEIC | EXIF（拍摄设备、GPS、时间戳）、XMP、ICC 配置文件 |
 
-> 清除独立图片时同样采用无损方式，不影响画质。
+> HEIC 文件重新编码可能导致文件体积变大，但元数据将被彻底清除。其余图片格式采用无损方式。
 
 **查看元数据：**
 
@@ -194,7 +195,7 @@ python3 metadata_cleaner.py *.docx *.xlsx *.pptx *.wps *.pdf
 | WPS 表格 | `.et` |
 | WPS 演示 | `.dps` |
 | PDF 文件 | `.pdf` |
-| 图片文件 | `.jpg` `.png` `.gif` `.bmp` `.tiff` `.webp` |
+| 图片文件 | `.jpg` `.png` `.gif` `.bmp` `.tiff` `.webp` `.heic` |
 
 > 旧版二进制格式（`.doc` / `.xls` / `.ppt` / 旧 `.wps`）不支持。请先"另存为"新格式。
 

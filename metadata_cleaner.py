@@ -37,9 +37,10 @@ SUPPORTED_EXTENSIONS = {
     ".pdf",
     ".png", ".jpg", ".jpeg",       # Standalone images
     ".gif", ".bmp", ".tiff", ".tif", ".webp",
+    ".heic",
 }
 OFFICE_EXTENSIONS = {".docx", ".xlsx", ".pptx", ".wps", ".et", ".dps"}
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic"}
 
 # Try importing pypdf (modern) then PyPDF2 (legacy) for PDF support
 try:
@@ -63,6 +64,15 @@ try:
 except ImportError:
     HAS_IMAGE_SUPPORT = False
 
+# Register HEIC/HEIF support with Pillow (optional)
+try:
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    HAS_HEIF_SUPPORT = True
+except ImportError:
+    HAS_HEIF_SUPPORT = False
+
 
 # ============================================================
 # Image metadata cleaning (embedded in Office files)
@@ -80,7 +90,7 @@ def _strip_image_metadata(data: bytes) -> bytes:
 
         img = Image.open(io.BytesIO(data))
         fmt = img.format
-        if fmt not in ("PNG", "JPEG", "TIFF", "BMP", "GIF"):
+        if fmt not in ("PNG", "JPEG", "TIFF", "BMP", "GIF", "HEIF"):
             return data
 
         out = io.BytesIO()
@@ -95,6 +105,21 @@ def _strip_image_metadata(data: bytes) -> bytes:
             img.save(out, format="PNG")
         elif fmt == "GIF":
             img.save(out, format="GIF")
+        elif fmt == "HEIF":
+            # Pillow's generic save preserves EXIF for HEIF; use pillow-heif
+            # directly after stripping metadata from the Pillow image.
+            try:
+                from pillow_heif import from_pillow as heif_from_pillow
+                for key in list(img.info.keys()):
+                    try:
+                        del img.info[key]
+                    except (KeyError, TypeError):
+                        pass
+                heif_img = heif_from_pillow(img)
+                heif_img.info.clear()
+                heif_img.save(out, quality=80)
+            except ImportError:
+                img.save(out, format="HEIF", quality=95)
         else:
             img.save(out, format=fmt)
         return out.getvalue()
@@ -267,7 +292,8 @@ def clean_office_file(filepath: str) -> tuple:
                     zout.writestr(item, cleaned)
                 # Strip EXIF/metadata from embedded images (screenshots, photos)
                 elif name.lower().endswith((".png", ".jpg", ".jpeg", ".gif",
-                                            ".bmp", ".tiff", ".tif", ".webp")):
+                                                ".bmp", ".tiff", ".tif", ".webp",
+                                                ".heic")):
                     cleaned = _strip_image_metadata(zin.read(name))
                     zout.writestr(item, cleaned)
                 # Stream everything else as-is (no memory accumulation)
@@ -661,7 +687,8 @@ def _read_office_metadata(filepath: str) -> dict:
             image_meta: dict[str, str] = {}
             for name in z.namelist():
                 if name.lower().endswith((".png", ".jpg", ".jpeg", ".gif",
-                                           ".bmp", ".tiff", ".tif", ".webp")):
+                                           ".bmp", ".tiff", ".tif", ".webp",
+                                           ".heic")):
                     try:
                         raw = z.read(name)
                         info = _read_image_metadata(raw)
@@ -714,8 +741,8 @@ def _read_image_metadata(data: bytes) -> dict[str, str]:
             for key, val in (img.text or {}).items():
                 info[key] = val
 
-        # EXIF may be present in PNG (eXIf chunk), JPEG, and TIFF
-        if img.format in ("PNG", "JPEG", "TIFF"):
+        # EXIF may be present in PNG (eXIf chunk), JPEG, TIFF, and HEIF
+        if img.format in ("PNG", "JPEG", "TIFF", "HEIF"):
             exif = img.getexif()
             if exif:
                 for tag_id, val in exif.items():
@@ -1080,7 +1107,7 @@ class MetadataCleanerApp:
         ttk.Label(main, text="元数据清除工具", font=("", 16, "bold")).pack(pady=(0, 2))
         ttk.Label(
             main,
-            text="支持 Word / Excel / PPT (.docx/.xlsx/.pptx)  |  WPS (.wps/.et/.dps)  |  PDF  |  图片 (.jpg/.png/.gif/.bmp/.tiff/.webp)",
+            text="支持 Word / Excel / PPT (.docx/.xlsx/.pptx)  |  WPS (.wps/.et/.dps)  |  PDF  |  图片 (.jpg/.png/.gif/.bmp/.tiff/.webp/.heic)",
             font=("", 10),
         ).pack(pady=(0, 12))
 
