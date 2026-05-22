@@ -7,12 +7,15 @@ on:
       - "**.md"
       - ".gitignore"
       - ".gitattributes"
+      - "backup/**"
   workflow_dispatch:
 
 jobs:
   # ── macOS build ──────────────────────────────────────────
   build-macos:
     runs-on: macos-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,8 +25,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt pyinstaller
+        run: pip install -r requirements.txt pyinstaller
 
       - name: Read version
         id: version
@@ -43,19 +45,18 @@ jobs:
 
       - name: Create .dmg
         run: |
-          APP_NAME="MetadataCleaner"
           VERSION="${{ steps.version.outputs.version }}"
           mkdir -p dist/dmg
-          cp -R "dist/${APP_NAME}.app" dist/dmg/
+          cp -R "dist/MetadataCleaner.app" dist/dmg/
           ln -s /Applications dist/dmg/Applications
           hdiutil create \
-            -volname "${APP_NAME}" \
+            -volname "MetadataCleaner" \
             -srcfolder dist/dmg \
             -ov \
             -format UDZO \
-            "dist/${APP_NAME}-${VERSION}-macOS.dmg"
+            "dist/MetadataCleaner-${VERSION}-macOS.dmg"
 
-      - name: Upload .dmg
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: macOS-dmg
@@ -64,6 +65,8 @@ jobs:
   # ── Windows build ────────────────────────────────────────
   build-windows:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -73,8 +76,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt pyinstaller
+        run: pip install -r requirements.txt pyinstaller
 
       - name: Read version
         id: version
@@ -102,8 +104,60 @@ jobs:
         run: |
           mv dist/MetadataCleaner.exe "dist/MetadataCleaner-${{ steps.version.outputs.version }}-Windows.exe"
 
-      - name: Upload .exe
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Windows-exe
           path: dist/MetadataCleaner-*-Windows.exe
+
+  # ── Create GitHub Release ────────────────────────────────
+  create-release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          VER=$(python3 -c "import re; f=open('metadata_cleaner.py').read(); m=re.search(r'__version__\s*=\s*\"([^\"]+)\"', f); print(m.group(1))")
+          echo "version=${VER}" >> $GITHUB_OUTPUT
+
+      - name: Check if release exists
+        id: check
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if gh release view "v${VERSION}" &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Release v${VERSION} already exists, skipping."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download macOS artifact
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: macOS-dmg
+
+      - name: Download Windows artifact
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: Windows-exe
+
+      - name: Create Release
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes "自动构建。macOS 下载 .dmg，Windows 下载 .exe。" \
+            MetadataCleaner-*-macOS.dmg \
+            MetadataCleaner-*-Windows.exe
+        env:
+          GH_TOKEN: ${{ github.token }}
