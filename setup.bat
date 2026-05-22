@@ -10,24 +10,15 @@ echo.
 
 REM ---- Step 1: Try direct commands ----
 python --version >nul 2>&1
-if !errorlevel! equ 0 (
-    echo [OK] Python found ^(PATH^)
-    python setup_windows.py
-    pause
-    exit /b
-)
+if !errorlevel! equ 0 set "PYTHON=python" & goto :run
+
 py --version >nul 2>&1
-if !errorlevel! equ 0 (
-    echo [OK] Python found ^(py launcher^)
-    py setup_windows.py
-    pause
-    exit /b
-)
+if !errorlevel! equ 0 set "PYTHON=py" & goto :run
 
 REM ---- Step 2: where command ----
 for /f "delims=" %%i in ('where python 2^>nul') do (
-    set "PYEXE=%%i"
-    goto :found
+    set "PYTHON=%%i"
+    goto :run
 )
 
 REM ---- Step 3: Scan registry for any Python 3.7-3.13 ----
@@ -38,8 +29,8 @@ for /l %%v in (13,-1,7) do (
     ) do (
         for /f "tokens=2*" %%a in ('reg query %%~r /ve 2^>nul ^| find "REG_SZ"') do (
             if exist "%%bpython.exe" (
-                set "PYEXE=%%bpython.exe"
-                goto :found
+                set "PYTHON=%%bpython.exe"
+                goto :run
             )
         )
     )
@@ -53,8 +44,8 @@ for %%d in (
 ) do (
     for /d %%p in ("%%~d\Python3*") do (
         if exist "%%p\python.exe" (
-            set "PYEXE=%%p\python.exe"
-            goto :found
+            set "PYTHON=%%p\python.exe"
+            goto :run
         )
     )
 )
@@ -69,10 +60,22 @@ echo Then run this script again.
 pause
 exit /b 1
 
-:found
+:run
 echo.
-echo [OK] Python found: !PYEXE!
+echo [OK] Python: !PYTHON!
+echo Running setup...
 echo.
-"!PYEXE!" setup_windows.py
+
+"!PYTHON!" setup_windows.py 2>&1
+set "EXITCODE=!errorlevel!"
+echo.
+echo ----------------------------------------
+if !EXITCODE! equ 0 (
+    echo Setup completed successfully.
+) else (
+    echo Setup script exited with code: !EXITCODE!
+)
+echo ----------------------------------------
+echo.
 pause
-exit /b
+exit /b !EXITCODE!

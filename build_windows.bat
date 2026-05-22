@@ -10,24 +10,15 @@ echo.
 
 REM ---- Step 1: Try direct commands ----
 python --version >nul 2>&1
-if !errorlevel! equ 0 (
-    echo [OK] Python found ^(PATH^)
-    python build_windows.py
-    pause
-    exit /b
-)
+if !errorlevel! equ 0 set "PYTHON=python" & goto :run
+
 py --version >nul 2>&1
-if !errorlevel! equ 0 (
-    echo [OK] Python found ^(py launcher^)
-    py build_windows.py
-    pause
-    exit /b
-)
+if !errorlevel! equ 0 set "PYTHON=py" & goto :run
 
 REM ---- Step 2: where command ----
 for /f "delims=" %%i in ('where python 2^>nul') do (
-    set "PYEXE=%%i"
-    goto :found
+    set "PYTHON=%%i"
+    goto :run
 )
 
 REM ---- Step 3: Scan registry for any Python 3.7-3.13 ----
@@ -38,8 +29,8 @@ for /l %%v in (13,-1,7) do (
     ) do (
         for /f "tokens=2*" %%a in ('reg query %%~r /ve 2^>nul ^| find "REG_SZ"') do (
             if exist "%%bpython.exe" (
-                set "PYEXE=%%bpython.exe"
-                goto :found
+                set "PYTHON=%%bpython.exe"
+                goto :run
             )
         )
     )
@@ -53,8 +44,8 @@ for %%d in (
 ) do (
     for /d %%p in ("%%~d\Python3*") do (
         if exist "%%p\python.exe" (
-            set "PYEXE=%%p\python.exe"
-            goto :found
+            set "PYTHON=%%p\python.exe"
+            goto :run
         )
     )
 )
@@ -63,7 +54,7 @@ REM ---- Python NOT found - download and install ----
 echo.
 echo Python 3 was not found on this computer.
 echo.
-echo The script will download Python 3.13 from a China mirror.
+echo The script will download Python 3.13 from Tsinghua mirror.
 echo IMPORTANT: Check [v] Add Python to PATH during install!
 echo.
 choice /c yn /n /m "Download and install Python 3.13? [Y]es [N]o: "
@@ -86,8 +77,6 @@ if not exist "!INSTALLER!" (
     echo.
     echo Download failed. Install Python manually:
     echo   https://mirrors.tuna.tsinghua.edu.cn/python/3.13.5/
-    echo.
-    echo Then run this script again.
     pause
     exit /b 1
 )
@@ -101,14 +90,9 @@ echo.
 echo Wait for installation to finish, then press any key...
 pause >nul
 
-REM After install - re-scan everything
+REM After install - try python directly
 python --version >nul 2>&1
-if !errorlevel! equ 0 (
-    echo [OK] Python ready
-    python build_windows.py
-    pause
-    exit /b
-)
+if !errorlevel! equ 0 set "PYTHON=python" & goto :run
 
 REM File scan after fresh install
 for %%d in (
@@ -117,10 +101,10 @@ for %%d in (
     "C:\"
 ) do (
     for /d %%p in ("%%~d\Python3*") do (
-        if exist "%%p\python.exe" set "PYEXE=%%p\python.exe"
+        if exist "%%p\python.exe" set "PYTHON=%%p\python.exe"
     )
 )
-if defined PYEXE goto :found
+if defined PYTHON goto :run
 
 echo.
 echo Python still not detected after install.
@@ -128,10 +112,23 @@ echo Try restarting your computer and run this script again.
 pause
 exit /b 1
 
-:found
+:run
 echo.
-echo [OK] Python found: !PYEXE!
+echo [OK] Python: !PYTHON!
+echo Running build script...
 echo.
-"!PYEXE!" build_windows.py
+
+"!PYTHON!" build_windows.py 2>&1
+set "EXITCODE=!errorlevel!"
+echo.
+echo ----------------------------------------
+if !EXITCODE! equ 0 (
+    echo Build completed successfully.
+) else (
+    echo Build script exited with code: !EXITCODE!
+    echo If you see errors above, check the messages.
+)
+echo ----------------------------------------
+echo.
 pause
-exit /b
+exit /b !EXITCODE!
