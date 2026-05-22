@@ -1512,6 +1512,7 @@ def cli_mode(paths: list[str]):
 
 
 def main():
+    global HAS_DND
     if len(sys.argv) > 1:
         cli_mode(sys.argv[1:])
     else:
@@ -1519,6 +1520,7 @@ def main():
             try:
                 root = TkinterDnD.Tk()
             except RuntimeError:
+                HAS_DND = False
                 root = tk.Tk()
         else:
             root = tk.Tk()
