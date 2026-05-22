@@ -1,0 +1,2 @@
+# Windows batch files — prevent git from touching encoding/line-endings
+*.bat -text
