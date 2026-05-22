@@ -223,8 +223,9 @@ def _clean_document_xml(xml_bytes: bytes) -> bytes:
     Word stores the source file path of pasted/dragged images here — this is
     how Acrobat shows original file paths when hovering over images in a PDF
     converted from Word."""
-    # Remove descr="C:\Users\...\WeChat Files\...png" attributes
-    data = re.sub(rb'\s+descr="[^"]*"', b"", xml_bytes)
+    # Remove descr="..." attributes only inside wp:docPr and pic:cNvPr tags
+    # to avoid accidentally matching literal text in document body
+    data = re.sub(rb'(<(?:wp:docPr|pic:cNvPr)[^>]*?)\s+descr="[^"]*"', rb"\1", xml_bytes)
     return data
 
 
@@ -1056,8 +1057,9 @@ class MetadataCleanerApp:
 
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="查看元数据", command=self._view_metadata)
-        menu.add_command(label="移除选中", command=self._remove_selected)
-        menu.add_command(label="清空列表", command=self._clear_files)
+        if not self._cleaning:
+            menu.add_command(label="移除选中", command=self._remove_selected)
+            menu.add_command(label="清空列表", command=self._clear_files)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
