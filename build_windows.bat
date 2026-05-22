@@ -1,39 +1,38 @@
-ï»¿@echo off
-chcp 65001 >nul 2>&1
+@echo off
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
-title å…ƒæ•°æ®æ¸…é™¤å·¥å…· â€” ä¸€é”®æ‰“åŒ…
+title ÔªÊý¾ÝÇå³ý¹¤¾ß ¡ª Ò»¼ü´ò°ü
 
 echo.
 echo  =============================================
-echo   å…ƒæ•°æ®æ¸…é™¤å·¥å…· â€” ä¸€é”®æ‰“åŒ… (Windows)
+echo   ÔªÊý¾ÝÇå³ý¹¤¾ß ¡ª Ò»¼ü´ò°ü (Windows)
 echo  =============================================
 echo.
 
 REM ============================================================
-REM 1. æŸ¥æ‰¾æˆ–å®‰è£… Python
+REM 1. ²éÕÒ»ò°²×° Python
 REM ============================================================
-echo  [1/6] æ£€æŸ¥ Python çŽ¯å¢ƒ...
+echo  [1/6] ¼ì²é Python »·¾³...
 echo.
 
 set PYTHON=
 set NEED_INSTALL=0
 
-REM 1a. ç›´æŽ¥è°ƒç”¨
+REM 1a. Ö±½Óµ÷ÓÃ
 python --version >nul 2>&1
 if %errorlevel% equ 0 (
     set PYTHON=python
     goto :found_python
 )
 
-REM 1b. py å¯åŠ¨å™¨
+REM 1b. py Æô¶¯Æ÷
 py --version >nul 2>&1
 if %errorlevel% equ 0 (
     set PYTHON=py
     goto :found_python
 )
 
-REM 1c. æ‰«æå¸¸è§è·¯å¾„
+REM 1c. É¨Ãè³£¼ûÂ·¾¶
 for %%d in (
     "%LOCALAPPDATA%\Programs\Python\*"
     "%PROGRAMFILES%\Python*"
@@ -48,75 +47,75 @@ for %%d in (
     )
 )
 
-REM 1d. where å…œåº•
+REM 1d. where ¶µµ×
 for /f "delims=" %%i in ('where python 2^>nul') do (
     set PYTHON="%%i"
     goto :found_python
 )
 
-REM ---- Python æœªæ‰¾åˆ°ï¼Œå¼€å§‹è‡ªåŠ¨å®‰è£… ----
-echo  [X] æœªæ£€æµ‹åˆ° Python
+REM ---- Python Î´ÕÒµ½£¬¿ªÊ¼×Ô¶¯°²×° ----
+echo  [X] Î´¼ì²âµ½ Python
 echo.
-echo  â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-echo  â•‘  å³å°†ä»Žå›½å†…é•œåƒè‡ªåŠ¨ä¸‹è½½å¹¶å®‰è£… Python 3.13  â•‘
-echo  â•‘                                              â•‘
-echo  â•‘  !! å®‰è£…æ—¶è¯·åŠ¡å¿…å‹¾é€‰:                        â•‘
-echo  â•‘  [âœ“] Add Python to PATH (æ·»åŠ åˆ°çŽ¯å¢ƒå˜é‡)     â•‘
-echo  â•‘                                              â•‘
-echo  â•‘  å®‰è£…å®ŒæˆåŽæœ¬è„šæœ¬ä¼šè‡ªåŠ¨ç»§ç»­                   â•‘
-echo  â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+echo  +==============================================+
+echo  |  ¼´½«´Ó¹úÄÚ¾µÏñ×Ô¶¯ÏÂÔØ²¢°²×° Python 3.13  |
+echo  |                                              |
+echo  |  !! °²×°Ê±ÇëÎñ±Ø¹´Ñ¡:                        |
+echo  |  [v] Add Python to PATH (Ìí¼Óµ½»·¾³±äÁ¿)     |
+echo  |                                              |
+echo  |  °²×°Íê³Éºó±¾½Å±¾»á×Ô¶¯¼ÌÐø                   |
+echo  +==============================================+
 echo.
-choice /c yn /n /m "æ˜¯å¦ç»§ç»­å®‰è£… Python? [Y]æ˜¯ [N]å¦: "
+choice /c yn /n /m "ÊÇ·ñ¼ÌÐø°²×° Python? [Y]ÊÇ [N]·ñ: "
 if errorlevel 2 exit /b 1
 
 set PYTHON_URL=https://mirrors.huaweicloud.com/python/3.13.5/python-3.13.5-amd64.exe
 set PYTHON_INSTALLER=%TEMP%\python-3.13.5-amd64.exe
 
 echo.
-echo  æ­£åœ¨ä¸‹è½½ Python 3.13 (åŽä¸ºäº‘é•œåƒ, çº¦ 26MB)...
-echo  å¦‚æžœä¸‹è½½æ…¢è¯·è€å¿ƒç­‰å¾…...
+echo  ÕýÔÚÏÂÔØ Python 3.13 (»ªÎªÔÆ¾µÏñ, Ô¼ 26MB)...
+echo  Èç¹ûÏÂÔØÂýÇëÄÍÐÄµÈ´ý...
 echo.
 powershell -Command "& {$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%PYTHON_URL%' -OutFile '%PYTHON_INSTALLER%'}" 2>&1
 
 if not exist "%PYTHON_INSTALLER%" (
     echo.
-    echo  åŽä¸ºäº‘ä¸‹è½½å¤±è´¥, å°è¯•æ¸…åŽé•œåƒ...
+    echo  »ªÎªÔÆÏÂÔØÊ§°Ü, ³¢ÊÔÇå»ª¾µÏñ...
     set PYTHON_URL=https://mirrors.tuna.tsinghua.edu.cn/python/3.13.5/python-3.13.5-amd64.exe
     powershell -Command "& {$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '!PYTHON_URL!' -OutFile '%PYTHON_INSTALLER%'}" 2>&1
 )
 
 if not exist "%PYTHON_INSTALLER%" (
     echo.
-    echo  è‡ªåŠ¨ä¸‹è½½å¤±è´¥ï¼Œè¯·æ‰‹åŠ¨å®‰è£… Python:
-    echo  æ¸…åŽé•œåƒ: https://mirrors.tuna.tsinghua.edu.cn/python/
-    echo  åŽä¸ºäº‘é•œåƒ: https://mirrors.huaweicloud.com/python/
+    echo  ×Ô¶¯ÏÂÔØÊ§°Ü£¬ÇëÊÖ¶¯°²×° Python:
+    echo  Çå»ª¾µÏñ: https://mirrors.tuna.tsinghua.edu.cn/python/
+    echo  »ªÎªÔÆ¾µÏñ: https://mirrors.huaweicloud.com/python/
     echo.
-    echo  å®‰è£…æ—¶åŠ¡å¿…å‹¾é€‰ "Add Python to PATH"
-    echo  è£…å¥½åŽé‡æ–°è¿è¡Œæœ¬è„šæœ¬å³å¯ã€‚
+    echo  °²×°Ê±Îñ±Ø¹´Ñ¡ "Add Python to PATH"
+    echo  ×°ºÃºóÖØÐÂÔËÐÐ±¾½Å±¾¼´¿É¡£
     pause
     exit /b 1
 )
 
-echo  ä¸‹è½½å®Œæˆï¼Œæ­£åœ¨å¯åŠ¨å®‰è£…ç¨‹åº...
+echo  ÏÂÔØÍê³É£¬ÕýÔÚÆô¶¯°²×°³ÌÐò...
 echo.
-echo  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-echo  â”‚ !! é‡è¦ !! è¯·å‹¾é€‰:                        â”‚
-echo  â”‚ [âœ“] Add Python to PATH                   â”‚
-echo  â”‚ (å®‰è£…ç•Œé¢åº•éƒ¨é‚£ä¸ªå¤é€‰æ¡†)                  â”‚
-echo  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+echo  +------------------------------------------+
+echo  | !! ÖØÒª !! Çë¹´Ñ¡:                        |
+echo  | [v] Add Python to PATH                   |
+echo  | (°²×°½çÃæµ×²¿ÄÇ¸ö¸´Ñ¡¿ò)                  |
+echo  +------------------------------------------+
 echo.
 
-REM /passive = æ˜¾ç¤ºè¿›åº¦æ¡ä½†ä¸å¼¹ç¡®è®¤æ¡†; PrependPath=1 è‡ªåŠ¨åŠ PATH
+REM /passive = ÏÔÊ¾½ø¶ÈÌõµ«²»µ¯È·ÈÏ¿ò; PrependPath=1 ×Ô¶¯¼ÓPATH
 "%PYTHON_INSTALLER%" /passive PrependPath=1 InstallAllUsers=0 Include_test=0
 
 echo.
-echo  ç­‰å¾… Python å®‰è£…å®Œæˆ...
-echo  å¦‚æžœå®‰è£…çª—å£å·²å…³é—­ï¼Œè¯´æ˜Žå®‰è£…å®Œæ¯•ã€‚
+echo  µÈ´ý Python °²×°Íê³É...
+echo  Èç¹û°²×°´°¿ÚÒÑ¹Ø±Õ£¬ËµÃ÷°²×°Íê±Ï¡£
 echo.
-echo  æŒ‰ä»»æ„é”®ç»§ç»­æ£€æŸ¥ Python æ˜¯å¦è£…å¥½...
+echo  °´ÈÎÒâ¼ü¼ÌÐø¼ì²é Python ÊÇ·ñ×°ºÃ...
 pause >nul
 
-REM é‡æ–°æ‰«æ Python
+REM ÖØÐÂÉ¨Ãè Python
 python --version >nul 2>&1
 if %errorlevel% equ 0 (
     set PYTHON=python
@@ -129,7 +128,7 @@ if %errorlevel% equ 0 (
     goto :found_python
 )
 
-REM å†æ¬¡æ‰«æè·¯å¾„ï¼ˆå®‰è£…åŽå¯èƒ½æ–°å‡ºçŽ°ï¼‰
+REM ÔÙ´ÎÉ¨ÃèÂ·¾¶£¨°²×°ºó¿ÉÄÜÐÂ³öÏÖ£©
 for %%d in (
     "%LOCALAPPDATA%\Programs\Python\*"
     "%PROGRAMFILES%\Python*"
@@ -145,39 +144,39 @@ for %%d in (
 )
 
 echo.
-echo  Python å®‰è£…åŽä»æœªæ£€æµ‹åˆ°ï¼Œå¯èƒ½éœ€è¦é‡å¯ç”µè„‘ã€‚
-echo  é‡å¯åŽé‡æ–°è¿è¡Œæœ¬è„šæœ¬å³å¯ã€‚
+echo  Python °²×°ºóÈÔÎ´¼ì²âµ½£¬¿ÉÄÜÐèÒªÖØÆôµçÄÔ¡£
+echo  ÖØÆôºóÖØÐÂÔËÐÐ±¾½Å±¾¼´¿É¡£
 pause
 exit /b 1
 
 :found_python
 echo.
 %PYTHON% --version
-echo  [OK] Python å°±ç»ª
+echo  [OK] Python ¾ÍÐ÷
 echo.
 
 REM ============================================================
-REM 2. é…ç½® pip å›½å†…é•œåƒ
+REM 2. ÅäÖÃ pip ¹úÄÚ¾µÏñ
 REM ============================================================
-echo  [2/6] é…ç½® pip æ¸…åŽé•œåƒ (ä¸‹è½½æ›´å¿«)...
+echo  [2/6] ÅäÖÃ pip Çå»ª¾µÏñ (ÏÂÔØ¸ü¿ì)...
 %PYTHON% -m pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>&1
 echo  [OK]
 echo.
 
 REM ============================================================
-REM 3. å®‰è£…ä¾èµ–
+REM 3. °²×°ÒÀÀµ
 REM ============================================================
-echo  [3/6] å®‰è£…é¡¹ç›®ä¾èµ– (é¦–æ¬¡è¿è¡Œéœ€è¦ä¸‹è½½ï¼Œè¯·è€å¿ƒç­‰å¾…)...
+echo  [3/6] °²×°ÏîÄ¿ÒÀÀµ (Ê×´ÎÔËÐÐÐèÒªÏÂÔØ£¬ÇëÄÍÐÄµÈ´ý)...
 echo.
 %PYTHON% -m pip install --upgrade pip --quiet
 %PYTHON% -m pip install pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller
 if %errorlevel% neq 0 (
     echo.
-    echo  [è­¦å‘Š] æ¸…åŽé•œåƒå¤±è´¥ï¼Œåˆ‡æ¢é˜¿é‡Œäº‘é‡è¯•...
+    echo  [¾¯¸æ] Çå»ª¾µÏñÊ§°Ü£¬ÇÐ»»°¢ÀïÔÆÖØÊÔ...
     %PYTHON% -m pip install pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller -i https://mirrors.aliyun.com/pypi/simple/
     if !errorlevel! neq 0 (
         echo.
-        echo  [é”™è¯¯] ä¾èµ–å®‰è£…å¤±è´¥ï¼Œè¯·æ£€æŸ¥ç½‘ç»œè¿žæŽ¥
+        echo  [´íÎó] ÒÀÀµ°²×°Ê§°Ü£¬Çë¼ì²éÍøÂçÁ¬½Ó
         pause
         exit /b 1
     )
@@ -186,34 +185,34 @@ echo  [OK]
 echo.
 
 REM ============================================================
-REM 4. è¯»å–ç‰ˆæœ¬å·
+REM 4. ¶ÁÈ¡°æ±¾ºÅ
 REM ============================================================
-echo  [4/6] è¯»å–ç‰ˆæœ¬å·...
+echo  [4/6] ¶ÁÈ¡°æ±¾ºÅ...
 %PYTHON% -c "from metadata_cleaner import __version__; print(__version__)" > "%TEMP%\mc_version.tmp"
 set /p VERSION=<"%TEMP%\mc_version.tmp"
 del "%TEMP%\mc_version.tmp" 2>nul
-echo  ç‰ˆæœ¬: v%VERSION%
+echo  °æ±¾: v%VERSION%
 echo.
 
 REM ============================================================
-REM 5. æ¸…ç†æ—§æž„å»º
+REM 5. ÇåÀí¾É¹¹½¨
 REM ============================================================
-echo  [5/6] æ¸…ç†æ—§æž„å»º...
+echo  [5/6] ÇåÀí¾É¹¹½¨...
 if exist build rmdir /s /q build
 if exist dist  rmdir /s /q dist
 echo  [OK]
 echo.
 
 REM ============================================================
-REM 6. PyInstaller æ‰“åŒ…
+REM 6. PyInstaller ´ò°ü
 REM ============================================================
-echo  [6/6] PyInstaller æ‰“åŒ…ä¸­ (é¢„è®¡ 2-5 åˆ†é’Ÿï¼Œè¯·å‹¿å…³é—­æ­¤çª—å£)...
-echo  çœ‹åˆ° "Building EXE" å­—æ ·è¡¨ç¤ºæ­£åœ¨å·¥ä½œ
+echo  [6/6] PyInstaller ´ò°üÖÐ (Ô¤¼Æ 2-5 ·ÖÖÓ£¬ÇëÎð¹Ø±Õ´Ë´°¿Ú)...
+echo  ¿´µ½ "Building EXE" ×ÖÑù±íÊ¾ÕýÔÚ¹¤×÷
 echo.
 
 %PYTHON% -m PyInstaller ^
     --windowed ^
-    --name "å…ƒæ•°æ®æ¸…é™¤å·¥å…·" ^
+    --name "ÔªÊý¾ÝÇå³ý¹¤¾ß" ^
     --icon icon.ico ^
     --hidden-import pillow_heif ^
     --hidden-import tkinterdnd2 ^
@@ -224,43 +223,43 @@ echo.
 
 if %errorlevel% neq 0 (
     echo.
-    echo  [é”™è¯¯] æ‰“åŒ…å¤±è´¥
+    echo  [´íÎó] ´ò°üÊ§°Ü
     pause
     exit /b 1
 )
 
 echo.
-echo  â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-echo  â•‘         æ‰“ åŒ… æˆ åŠŸ ï¼                    â•‘
-echo  â•‘                                          â•‘
-echo  â•‘  dist\å…ƒæ•°æ®æ¸…é™¤å·¥å…·\å…ƒæ•°æ®æ¸…é™¤å·¥å…·.exe    â•‘
-echo  â•‘                                          â•‘
-echo  â•‘  å¤åˆ¶æ•´ä¸ª"å…ƒæ•°æ®æ¸…é™¤å·¥å…·"æ–‡ä»¶å¤¹åˆ°         â•‘
-echo  â•‘  å…¶ä»–ç”µè„‘å³å¯ç›´æŽ¥è¿è¡Œï¼Œæ— éœ€Pythonã€‚       â•‘
-echo  â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+echo  +==========================================+
+echo  |         ´ò °ü ³É ¹¦ £¡                    |
+echo  |                                          |
+echo  |  dist\ÔªÊý¾ÝÇå³ý¹¤¾ß\ÔªÊý¾ÝÇå³ý¹¤¾ß.exe    |
+echo  |                                          |
+echo  |  ¸´ÖÆÕû¸ö"ÔªÊý¾ÝÇå³ý¹¤¾ß"ÎÄ¼þ¼Ðµ½         |
+echo  |  ÆäËûµçÄÔ¼´¿ÉÖ±½ÓÔËÐÐ£¬ÎÞÐèPython¡£       |
+echo  +==========================================+
 echo.
 
 REM ============================================================
-REM å¯é€‰: Inno Setup
+REM ¿ÉÑ¡: Inno Setup
 REM ============================================================
 for %%d in (
     "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
     "C:\Program Files\Inno Setup 6\ISCC.exe"
 ) do (
     if exist %%d (
-        echo  æ£€æµ‹åˆ° Inno Setup, æ­£åœ¨ç”Ÿæˆå®‰è£…åŒ…...
+        echo  ¼ì²âµ½ Inno Setup, ÕýÔÚÉú³É°²×°°ü...
         %%d /DMyAppVersion=%VERSION% installer.iss
         if !errorlevel! equ 0 (
-            echo  å®‰è£…åŒ…: dist\MetadataCleaner-Setup-%VERSION%.exe
+            echo  °²×°°ü: dist\MetadataCleaner-Setup-%VERSION%.exe
         )
         goto :done
     )
 )
 
-echo  å¦‚éœ€ .exe å®‰è£…åŒ…ï¼Œå®‰è£… Inno Setup 6 åŽé‡è·‘æœ¬è„šæœ¬:
+echo  ÈçÐè .exe °²×°°ü£¬°²×° Inno Setup 6 ºóÖØÅÜ±¾½Å±¾:
 echo  https://jrsoftware.org/isinfo.php
 
 :done
 echo.
-echo  æŒ‰ä»»æ„é”®é€€å‡º...
+echo  °´ÈÎÒâ¼üÍË³ö...
 pause >nul
