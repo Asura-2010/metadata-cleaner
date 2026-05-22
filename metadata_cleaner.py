@@ -319,7 +319,7 @@ def clean_office_file(filepath: str) -> tuple:
         if isinstance(exc, PermissionError):
             return False, "文件正被其他程序(如 Office/WPS)占用，请先关闭该文件再试。"
         if isinstance(exc, zipfile.BadZipFile):
-            return False, "文件已损坏或不是有效的 Office/WPS 文档（旧版二进制格式不支持）。"
+            return False, "文件是旧版二进制格式（.doc/.xls/.ppt），请用 Office / WPS 打开后「另存为」新版格式（.docx/.xlsx/.pptx）再试。"
         return False, str(exc)
 
 
@@ -505,6 +505,11 @@ def clean_file(filepath: str) -> tuple:
     ext = Path(filepath).suffix.lower()
 
     if ext not in SUPPORTED_EXTENSIONS:
+        if ext in {".doc", ".xls", ".ppt"}:
+            new_ext = ".docx" if ext == ".doc" else (".xlsx" if ext == ".xls" else ".pptx")
+            return False, f"旧版二进制格式 {ext} 不支持，请用 Office / WPS 打开后「另存为」{new_ext} 格式再试。"
+        if ext in {".wps1", ".wpt"}:
+            return False, f"旧版 WPS 格式 {ext} 不支持，请用 WPS 打开后「另存为」新版格式（.wps/.et/.dps）再试。"
         return False, f"不支持的文件类型: {ext}"
 
     if ext == ".pdf":
@@ -1077,6 +1082,11 @@ def read_metadata(filepath: str) -> dict:
         return _read_office_metadata(filepath)
     elif ext in IMAGE_EXTENSIONS:
         return _read_image_file_metadata(filepath)
+    if ext in {".doc", ".xls", ".ppt"}:
+        new_ext = ".docx" if ext == ".doc" else (".xlsx" if ext == ".xls" else ".pptx")
+        return {"错误": {"不支持": f"旧版格式 {ext}，请用 Office/WPS「另存为」{new_ext} 后重试"}}
+    if ext in {".wps1", ".wpt"}:
+        return {"错误": {"不支持": f"旧版 WPS 格式 {ext}，请用 WPS「另存为」新版格式后重试"}}
     return {"错误": {"不支持": f"文件类型 {ext} 不支持"}}
 
 
