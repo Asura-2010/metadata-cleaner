@@ -1,6 +1,6 @@
 # 文档元数据清除工具 v1.1.0
 
-> 一键清除 Office / WPS / PDF 文件中隐藏的个人和公司信息
+> 一键清除 Office / WPS / PDF / 图片文件中隐藏的个人和公司信息
 
 ![平台](https://img.shields.io/badge/平台-Windows%20%7C%20macOS%20%7C%20Linux-brightgreen)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue)
@@ -17,6 +17,7 @@
 | 创建时间 / 修改时间 / 最后打印 | 2024-01-15 14:30 |
 | 版本号 / 修订号 | 3.1、42 |
 | 标题 / 主题 / 描述 | 机密报告、财务数据 |
+| 图片元数据（EXIF / XMP / PNG 文本） | 拍摄设备、GPS、创建软件、原始路径 |
 | 编辑时长 | 1071 分钟 |
 | 自定义属性（custom.xml） | 第三方插件写入的路径、标识等 |
 | 图片源路径（document.xml descr） | C:\Users\张三\WeChat\image.png |
