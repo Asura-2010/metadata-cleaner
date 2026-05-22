@@ -1516,7 +1516,10 @@ def main():
         cli_mode(sys.argv[1:])
     else:
         if HAS_DND:
-            root = TkinterDnD.Tk()
+            try:
+                root = TkinterDnD.Tk()
+            except RuntimeError:
+                root = tk.Tk()
         else:
             root = tk.Tk()
         MetadataCleanerApp(root)
