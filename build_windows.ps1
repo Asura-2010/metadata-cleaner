@@ -192,8 +192,12 @@ try {
 # Clean old builds
 Write-Host ""
 Write-Host "Cleaning old builds..."
-@("build", "dist") | ForEach-Object {
-    if (Test-Path $_) { Remove-Item -Recurse -Force $_ -ErrorAction SilentlyContinue }
+$toClean = @("$ScriptDir\build", "$ScriptDir\dist")
+foreach ($p in $toClean) {
+    if (Test-Path $p) {
+        Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue
+        Write-Host "  Removed: $p"
+    }
 }
 
 # Build with PyInstaller
@@ -218,8 +222,12 @@ $pyiArgs = @(
 
 if ($LASTEXITCODE -eq 0) {
     # Clean up build artifacts
-    @("build", "MetadataCleaner.spec") | ForEach-Object {
-        if (Test-Path $_) { Remove-Item -Recurse -Force $_ -ErrorAction SilentlyContinue }
+    $cleanup = @("$ScriptDir\build", "$ScriptDir\MetadataCleaner.spec")
+    foreach ($p in $cleanup) {
+        if (Test-Path $p) {
+            Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue
+            Write-Host "  Removed: $p"
+        }
     }
 
     Write-Host ""
