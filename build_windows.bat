@@ -17,14 +17,12 @@ echo  [1/6] 检查 Python 环境...
 echo.
 
 set PYTHON=
-set PIP=
 set NEED_INSTALL=0
 
 REM 1a. 直接调用
 python --version >nul 2>&1
 if %errorlevel% equ 0 (
     set PYTHON=python
-    set PIP=pip
     goto :found_python
 )
 
@@ -32,13 +30,12 @@ REM 1b. py 启动器
 py --version >nul 2>&1
 if %errorlevel% equ 0 (
     set PYTHON=py
-    set PIP=py -m pip
     goto :found_python
 )
 
 REM 1c. 扫描常见路径
 for %%d in (
-    "%LOCALAPPDATA%\Programs\Python"
+    "%LOCALAPPDATA%\Programs\Python\*"
     "%PROGRAMFILES%\Python*"
     "%PROGRAMFILES(X86)%\Python*"
     "C:\Python*"
@@ -46,7 +43,6 @@ for %%d in (
     for /d %%p in (%%d) do (
         if exist "%%p\python.exe" (
             set PYTHON="%%p\python.exe"
-            set PIP="%%p\python.exe" -m pip
             goto :found_python
         )
     )
@@ -55,7 +51,6 @@ for %%d in (
 REM 1d. where 兜底
 for /f "delims=" %%i in ('where python 2^>nul') do (
     set PYTHON="%%i"
-    set PIP="%%i" -m pip
     goto :found_python
 )
 
@@ -125,20 +120,18 @@ REM 重新扫描 Python
 python --version >nul 2>&1
 if %errorlevel% equ 0 (
     set PYTHON=python
-    set PIP=pip
     goto :found_python
 )
 
 py --version >nul 2>&1
 if %errorlevel% equ 0 (
     set PYTHON=py
-    set PIP=py -m pip
     goto :found_python
 )
 
 REM 再次扫描路径（安装后可能新出现）
 for %%d in (
-    "%LOCALAPPDATA%\Programs\Python"
+    "%LOCALAPPDATA%\Programs\Python\*"
     "%PROGRAMFILES%\Python*"
     "%PROGRAMFILES(X86)%\Python*"
     "C:\Python*"
@@ -146,7 +139,6 @@ for %%d in (
     for /d %%p in (%%d) do (
         if exist "%%p\python.exe" (
             set PYTHON="%%p\python.exe"
-            set PIP="%%p\python.exe" -m pip
             goto :found_python
         )
     )
@@ -183,7 +175,7 @@ if %errorlevel% neq 0 (
     echo.
     echo  [警告] 清华镜像失败，切换阿里云重试...
     %PYTHON% -m pip install pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller -i https://mirrors.aliyun.com/pypi/simple/
-    if %errorlevel% neq 0 (
+    if !errorlevel! neq 0 (
         echo.
         echo  [错误] 依赖安装失败，请检查网络连接
         pause
@@ -197,7 +189,9 @@ REM ============================================================
 REM 4. 读取版本号
 REM ============================================================
 echo  [4/6] 读取版本号...
-for /f "tokens=*" %%i in ('%PYTHON% -c "from metadata_cleaner import __version__; print(__version__)"') do set VERSION=%%i
+%PYTHON% -c "from metadata_cleaner import __version__; print(__version__)" > "%TEMP%\mc_version.tmp"
+set /p VERSION=<"%TEMP%\mc_version.tmp"
+del "%TEMP%\mc_version.tmp" 2>nul
 echo  版本: v%VERSION%
 echo.
 
@@ -256,7 +250,7 @@ for %%d in (
     if exist %%d (
         echo  检测到 Inno Setup, 正在生成安装包...
         %%d /DMyAppVersion=%VERSION% installer.iss
-        if %errorlevel% equ 0 (
+        if !errorlevel! equ 0 (
             echo  安装包: dist\MetadataCleaner-Setup-%VERSION%.exe
         )
         goto :done
