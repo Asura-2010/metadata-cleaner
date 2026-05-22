@@ -6,12 +6,12 @@ set PYTHON=
 
 REM 1. Try python command
 python --version >nul 2>&1
-if %errorlevel% equ 0 set PYTHON=python
+if !errorlevel! equ 0 set PYTHON=python
 
 REM 2. Try py launcher
 if not defined PYTHON (
     py --version >nul 2>&1
-    if %errorlevel% equ 0 set PYTHON=py
+    if !errorlevel! equ 0 set PYTHON=py
 )
 
 REM 3. Scan common install paths
