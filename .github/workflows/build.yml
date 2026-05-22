@@ -1,0 +1,103 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  # ── macOS build ──────────────────────────────────────────
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt pyinstaller
+
+      - name: Read version
+        id: version
+        run: |
+          VER=$(python -c "from metadata_cleaner import __version__; print(__version__)")
+          echo "version=${VER}" >> $GITHUB_OUTPUT
+
+      - name: Build .app
+        run: |
+          pyinstaller \
+            --windowed \
+            --name "MetadataCleaner" \
+            --osx-bundle-identifier "com.asura.metadata-cleaner" \
+            --icon icon.icns \
+            --clean \
+            metadata_cleaner.py
+
+      - name: Create .dmg
+        run: |
+          APP_NAME="MetadataCleaner"
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p dist/dmg
+          cp -R "dist/${APP_NAME}.app" dist/dmg/
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create \
+            -volname "${APP_NAME}" \
+            -srcfolder dist/dmg \
+            -ov \
+            -format UDZO \
+            "dist/${APP_NAME}-${VERSION}-macOS.dmg"
+
+      - name: Upload .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: macOS-dmg
+          path: dist/MetadataCleaner-*-macOS.dmg
+
+  # ── Windows build ────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt pyinstaller
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VER=$(python -c "from metadata_cleaner import __version__; print(__version__)")
+          echo "version=${VER}" >> $GITHUB_OUTPUT
+
+      - name: Build .exe (onefile)
+        run: |
+          pyinstaller `
+            --windowed `
+            --onefile `
+            --name "MetadataCleaner" `
+            --icon icon.ico `
+            --hidden-import pillow_heif `
+            --hidden-import tkinterdnd2 `
+            --add-data "icon.ico;." `
+            --clean `
+            --noconfirm `
+            metadata_cleaner.py
+
+      - name: Rename with version
+        shell: bash
+        run: |
+          mv dist/MetadataCleaner.exe "dist/MetadataCleaner-${{ steps.version.outputs.version }}-Windows.exe"
+
+      - name: Upload .exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-exe
+          path: dist/MetadataCleaner-*-Windows.exe

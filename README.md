@@ -1,0 +1,257 @@
+# 文档元数据清除工具 v1.2.0
+
+> 一键清除 Office / WPS / PDF / 图片文件中隐藏的个人和公司信息
+
+![平台](https://img.shields.io/badge/平台-Windows%20%7C%20macOS%20%7C%20Linux-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.8+-blue)
+![许可](https://img.shields.io/badge/许可-MIT-green)
+
+## 功能
+
+点击「查看元数据」可核对文件中的所有隐藏信息，点击「清除元数据」一键清除。
+
+### Office / WPS 文档（.docx / .xlsx / .pptx / .wps / .et / .dps）
+
+**文档属性（core.xml）**
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| 作者 / 最后修改者 | 创建和编辑文档的用户名 | 张三、Asura |
+| 创建时间 / 修改时间 / 最后打印 | 文档时间戳 | 2024-01-15 14:30 |
+| 修订号 | 文档编辑次数 | 42 |
+
+**扩展属性（app.xml）**
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| 公司 / 管理者 | 安装 Office 时填写的组织信息 | XX有限公司 |
+| 模板 | 文档基于的模板路径 | C:\Users\...\Normal.dotm |
+| 编辑时长 | 累计编辑分钟数 | 1071 分钟 |
+| 创建程序及版本 | 生成文档的软件 | Microsoft Office Word / WPS |
+| 统计信息 | 页数 / 字数 / 行数等 | — |
+
+**自定义属性（custom.xml）**
+
+第三方插件（如 SharePoint、云盘同步工具）写入的路径、标识符、内部编号等。
+
+**嵌入图片的元数据**
+
+从微信、QQ、截图工具等渠道粘贴到文档中的图片，携带大量隐藏信息：
+
+| 隐藏内容 | 示例 |
+|----------|------|
+| 创建软件 | Adobe Photoshop 21.1 (Windows) |
+| 修改时间戳 | 2023-11-29 10:43:14 |
+| EXIF 数据 | 分辨率、色彩空间、ICC 配置文件 |
+| PNG 文本块 | 原始文件名、软件标识 |
+
+> 支持清除 JPEG / PNG / GIF / BMP / TIFF / WebP 格式的嵌入图片元数据。采用无损方式剥离，不影响画质。
+
+**图片源路径（document.xml descr 属性）**
+
+这是最隐蔽的泄露点。在 Word 中通过"插入图片"或拖拽方式添加的图片，其**原始文件路径**会被记录在 XML 的 `descr` 属性中：
+
+| 来源 | 示例路径 |
+|------|----------|
+| 微信截图 | `C:\Users\Asura\AppData\Local\Temp\WeChat Files\...png` |
+| 浏览器缓存 | `C:\Users\Asura\...\INetCache\Content.Word\...jpg` |
+| 网络下载 | `https://example.com/project/...png` |
+
+> 这些路径在 Word 界面中完全不可见，但转为 PDF 后在 Acrobat 中鼠标悬停图片时**直接显示原始路径**，可看到来源电脑的用户名和目录结构。
+
+### PDF 文件
+
+**标准文档属性**
+
+| 字段 | 示例 |
+|------|------|
+| 标题 / 作者 / 主题 / 关键词 | 机密报告、张三 |
+| 创建程序 / 生成工具 | Acrobat PDFMaker 19 Word 版 |
+| 创建时间 / 修改时间 / 源修改时间 | 2024-01-09 16:42:45 |
+| 公司 / 注释 | XX有限公司、内部审批稿 |
+
+**XMP 文档级元数据（PDF 信息字典之外的隐藏数据）**
+
+| 字段 | 示例 |
+|------|------|
+| XMP-创建工具 | Acrobat PDFMaker 19 Word 版 |
+| XMP-文档 ID | uuid:a1b2c3d4-...（可追溯文档来源） |
+| XMP-时间戳 | 创建/修改/元数据日期 |
+
+**结构树图片源路径（/Alt 文本）**
+
+Word 转 PDF 时，document.xml 中的 `descr` 路径会自动写入 PDF 结构树（/StructTreeRoot → /Alt 条目），采用 UTF-16BE 编码存储。在 Acrobat 中鼠标悬停图片时直接显示。这是从 Office 文档继承的最隐蔽元数据。
+
+**图片 XMP 元数据**
+
+PDF 中每张嵌入图片（如 JPEG 格式的照片）都携带独立的 XMP 记录：
+
+| 隐藏内容 | 示例 |
+|----------|------|
+| 创建工具 | Adobe Photoshop 21.1 (Windows) |
+| 软件代理 | Adobe Photoshop 21.1 (Windows) |
+| 创建/修改时间 | 2023-11-29 10:41:53+08:00 |
+| 元数据日期 | 2024-01-08 13:37:46+08:00 |
+
+**URL 链接**
+
+PDF 中的超链接注释（/URI），包含文档中嵌入的所有网址。
+
+### 独立图片文件
+
+| 格式 | 隐藏内容 |
+|------|----------|
+| JPEG | EXIF（拍摄设备、GPS、时间戳）、XMP、IPTC、ICC 配置文件 |
+| PNG | EXIF（eXIf chunk）、tEXt/iTXt/zTXt 文本块（软件标识、原始文件名） |
+| GIF / BMP / TIFF / WebP | 各自的元数据字段 |
+| HEIC | EXIF（拍摄设备、GPS、时间戳）、XMP、ICC 配置文件 |
+
+> HEIC 文件重新编码可能导致文件体积变大，但元数据将被彻底清除。其余图片格式采用无损方式。
+
+**查看元数据：**
+
+选中文件 → 右键「查看元数据」（或点击按钮），清洗前核对文件包含哪些隐藏信息。
+
+## 批注和修订记录
+
+工具**能自动检测**文档中的批注和修订记录，但**无法自动清除**（嵌在正文 XML 中，结构复杂）。
+
+检测到批注/修订时，会弹出提示，指导你去 Office 或 WPS 中手动清理：
+
+1. **审阅 → 接受所有修订**（清除修订记录中的作者名）
+2. **审阅 → 删除文档中的所有批注**
+3. 保存后重新拖入工具处理
+
+## 快速开始
+
+### 下载（推荐）
+
+| 平台 | 下载 | 说明 |
+|------|------|------|
+| **macOS** | [MetadataCleaner-1.1.0.dmg](https://github.com/Asura-2010/metadata-cleaner/releases/latest) | 打开后拖入 Applications，开箱即用 |
+| **Windows** | [MetadataCleaner-Setup-1.1.0.exe](https://github.com/Asura-2010/metadata-cleaner/releases/latest) | 运行安装程序，创建桌面快捷方式 |
+
+> 以上安装包已包含 Python 和所有依赖，无需单独安装 Python。
+
+### 从源码运行
+
+**Windows**
+```
+双击 setup.bat → 安装依赖 → 双击 run.vbs（静默启动）
+```
+
+**macOS**
+```
+终端运行 bash setup.sh → 安装依赖 → 双击 run.command
+```
+
+## 发布构建
+
+```bash
+# macOS → 生成 .dmg
+bash build_macos.sh
+
+# Windows → 生成 setup.exe（需安装 Inno Setup 6+）
+build_windows.bat
+```
+
+构建脚本会自动调用 PyInstaller 打包所有依赖，用户无需安装 Python。
+
+## 使用方法
+
+### 图形界面（单文件 / 批量均可）
+
+- **macOS**：双击 `run.command`（终端自动关闭）
+- **Windows**：双击 `run.vbs`（静默启动，无窗口）
+
+1. 点击 **「添加文件」**，选择要处理的文件（按住 `Ctrl` 或 `Cmd` 可多选，**支持批量**）
+2. （可选）选中文件 → **右键「查看元数据」**，核对文件中的隐藏信息
+3. 点击 **「清除元数据」**
+4. 如有批注/修订会先弹出警告
+5. 确认后自动处理，进度条显示实时状态，完成弹窗提示
+
+### 拖拽批量处理
+
+把**一个或多个**文件框选后直接拖到 `metadata_cleaner.py` 图标上，无需打开界面，自动处理全部并显示结果。
+
+### 命令行批量处理
+
+```bash
+# 处理当前目录下所有 Word 文档
+python3 metadata_cleaner.py *.docx
+
+# 处理所有支持的 Office 和 PDF 文件
+python3 metadata_cleaner.py *.docx *.xlsx *.pptx *.wps *.pdf
+```
+
+## 支持的文件格式
+
+| 类型 | 扩展名 |
+|------|--------|
+| Word 文档 | `.docx` |
+| Excel 表格 | `.xlsx` |
+| PowerPoint 演示 | `.pptx` |
+| WPS 文字 | `.wps` |
+| WPS 表格 | `.et` |
+| WPS 演示 | `.dps` |
+| PDF 文件 | `.pdf` |
+| 图片文件 | `.jpg` `.png` `.gif` `.bmp` `.tiff` `.webp` `.heic` |
+
+> 旧版二进制格式（`.doc` / `.xls` / `.ppt` / 旧 `.wps`）不支持。请先"另存为"新格式。
+
+## 安全设计
+
+| 机制 | 说明 |
+|------|------|
+| **原子替换** | 先写临时文件，成功后再替换；中途断电原文件无损 |
+| **流式处理** | 逐条读写 ZIP，500MB+ 文件不会 OOM |
+| **权限保留** | 替换前同步原始文件权限，避免权限变更 |
+| **正则清洗** | 直接修改 XML 文本，保留原始结构（命名空间、换行符等），Word/WPS 严格校验通过 |
+| **图片源路径** | 清除 document.xml 中 descr 属性里的图片源路径，以及 PDF 结构树 /Alt 条目 |
+| **二进制 Padding** | PDF /Alt 文本使用等宽零字符替换，保持文件字节偏移不变 |
+| **分类报错** | 权限不足、格式不支持等均有中文提示 |
+
+## 依赖
+
+```
+pypdf>=5.0.0  (或者 PyPDF2>=3.0.0)
+tkinterdnd2>=0.4.0  (可选，拖拽支持)
+```
+
+## 常见问题
+
+<details>
+<summary><b>处理后文件会损坏吗？</b></summary>
+不会。原子替换机制保证即使写入中途断电，原文件也完好无损。
+</details>
+
+<details>
+<summary><b>能恢复清除的元数据吗？</b></summary>
+不能，清除是永久性的。建议处理敏感文件前先备份。
+</details>
+
+<details>
+<summary><b>提示"文件正被其他程序占用"？</b></summary>
+先关闭 Office / WPS 中打开的该文件，再重试。
+</details>
+
+<details>
+<summary><b>提示"不是有效的 Office/WPS 文档"？</b></summary>
+文件是旧版二进制格式，本工具不支持。请在 Office 中"另存为" .docx 格式。
+</details>
+
+<details>
+<summary><b>旧格式 .doc / .xls / .ppt 能处理吗？</b></summary>
+先用 Office 打开，「文件 → 另存为」 .docx / .xlsx / .pptx，再处理。
+</details>
+
+<details>
+<summary><b>pip 安装太慢？</b></summary>
+setup 脚本已配置清华镜像。如仍慢，手动切换：
+<pre>pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/</pre>
+</details>
+
+<details>
+<summary><b>如何查看文件中有哪些元数据？</b></summary>
+文件列表中右键文件 →「查看元数据」，可分类展示所有隐藏信息。
+</details>
