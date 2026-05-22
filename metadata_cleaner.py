@@ -297,40 +297,81 @@ def clean_office_file(filepath: str) -> tuple:
         return False, str(exc)
 
 
-def _strip_pdf_alt_text(path: str) -> None:
-    """Clear /Alt text from a PDF's structure tree to remove image source
-    paths.  Handles both raw binary (original PDFs) and PDF octal-escape
-    notation (after clone_document_from_reader re-serialises strings).
-    Uses equal-width padding to keep XREF byte offsets valid."""
-    import re
+# ============================================================
+# PDF raw-byte post-processing (single read/write)
+# ============================================================
 
-    def _pad_alt(m: re.Match) -> bytes:
-        prefix = m.group(1)   # /Alt or /Alt (
-        inner = m.group(2)    # content between parens
-        suffix = m.group(3)   # )
-        # Pad inner content with spaces (0x20), keeping length identical
-        padding = b" " * len(inner)
-        return prefix + padding + suffix
+_XMP_ATTRS = (
+    "xmp:CreateDate", "xmp:ModifyDate", "xmp:MetadataDate",
+    "xmp:CreatorTool", "xmpMM:DocumentID", "xmpMM:InstanceID",
+    "xmpMM:OriginalDocumentID", "dc:format", "photoshop:ColorMode",
+    "photoshop:ICCProfile", "stEvt:softwareAgent", "stEvt:when",
+    "stEvt:action",
+)
+
+def _strip_pdf_raw_bytes(path: str) -> None:
+    """Single-pass raw-byte cleaning of a pypdf-written PDF.
+    - /Alt image source paths → equal-width space padding
+    - /URI links → equal-width space padding
+    - Per-image XMP attributes → empty values
+    - Document-level XMP streams → blanked with spaces"""
+    import re
 
     with open(path, "rb") as f:
         content = f.read()
 
-    # Match /Alt(...) and /Alt (...) — with any content inside parens.
-    # The \\. alternative handles PDF octal escapes like \376\377 inside.
+    # --- /Alt image source paths ---
+    def _pad_alt(m: re.Match) -> bytes:
+        prefix, inner, suffix = m.group(1), m.group(2), m.group(3)
+        return prefix + b" " * len(inner) + suffix
+
     content = re.sub(rb"(/Alt\s?\()((?:[^\\]|\\.)*?)(\))", _pad_alt, content)
+
+    # --- /URI links ---
+    def _pad_uri(m: re.Match) -> bytes:
+        prefix, inner, suffix = m.group(1), m.group(2), m.group(3)
+        return prefix + b" " * len(inner) + suffix
+
+    content = re.sub(rb"(/URI\s?\()((?:[^\\]|\\.)*?)(\))", _pad_uri, content)
+
+    # --- Per-image XMP attributes ---
+    # Use equal-width space padding to avoid breaking XREF byte offsets.
+    # PDF streams have a /Length entry; changing content length corrupts the file.
+    def _pad_xmp_attr(m: re.Match) -> bytes:
+        prefix = m.group(1)   # e.g. xmp:CreatorTool="
+        value = m.group(2)    # the value between quotes
+        suffix = m.group(3)   # closing "
+        return prefix + b" " * len(value) + suffix
+
+    for attr in _XMP_ATTRS:
+        content = re.sub(
+            rb'(' + attr.encode() + rb'\s*=\s*")([^"]*)(")',
+            _pad_xmp_attr, content)
+
+    # --- Document-level XMP streams ---
+    # Only match complete XMP packets (<?xpacket begin= ... <?xpacket end=).
+    # Avoid matching standalone <?xpacket end="w"?> inside ICC colour profiles.
+    # Use a bounded repeat instead of .*? with re.DOTALL to prevent catastrophic
+    # matches across large swaths of binary data.
+    def _pad_xmp(m: re.Match) -> bytes:
+        return b" " * len(m.group())
+
+    content = re.sub(
+        rb'<\?xpacket begin=[\x00-\xff]{0,50000}?<\?xpacket end=',
+        _pad_xmp, content, flags=re.DOTALL)
+    # Also match any standalone x:xmpmeta blocks not wrapped in xpacket
+    content = re.sub(
+        rb'<x:xmpmeta[\x00-\xff]{0,50000}?</x:xmpmeta>',
+        _pad_xmp, content, flags=re.DOTALL)
 
     with open(path, "wb") as f:
         f.write(content)
 
 
-# ============================================================
-# PDF metadata cleaning
-# ============================================================
-
-
 def clean_pdf_file(filepath: str) -> tuple:
     """
-    Remove metadata from a PDF file.
+    Remove metadata from a PDF file — info dict, XMP (doc + image level),
+    /Alt image source paths, /URI links, and Producer.
     Returns (success: bool, error_message: str|None).
     """
     if not HAS_PDF_SUPPORT:
@@ -345,25 +386,33 @@ def clean_pdf_file(filepath: str) -> tuple:
             reader = PdfReader(fin)
             writer = PdfWriter()
 
-            # clone_document_from_reader preserves bookmarks, links, forms
-            # (available in pypdf >= 3.1.0 and PyPDF2 >= 2.0)
             if hasattr(writer, "clone_document_from_reader"):
                 writer.clone_document_from_reader(reader)
             else:
                 for page in reader.pages:
                     writer.add_page(page)
 
-            # Override metadata — /Producer set to space prevents pypdf
-            # from auto-injecting its own version string
-            writer.add_metadata({"/Producer": " "})
+            # Clear all info-dict fields — setting to " " satisfies pypdf's
+            # truthiness check while preventing auto-injected Producer
+            writer.add_metadata({
+                "/Producer": " ",
+                "/Creator": " ",
+                "/CreationDate": " ",
+                "/ModDate": " ",
+                "/Title": " ",
+                "/Author": " ",
+                "/Subject": " ",
+                "/Keywords": " ",
+                "/Comments": " ",
+                "/Company": " ",
+                "/SourceModified": " ",
+            })
 
-            # Write must stay inside the 'fin' with-block — pypdf uses
-            # lazy reading and the source must remain open during write
             with open(tmp_path, "wb") as fout:
                 writer.write(fout)
 
-        # Clear image source paths from structure tree /Alt entries
-        _strip_pdf_alt_text(tmp_path)
+        # Single-pass raw-byte post-processing
+        _strip_pdf_raw_bytes(tmp_path)
 
         try:
             shutil.copymode(filepath, tmp_path)
@@ -729,12 +778,12 @@ def _scan_pdf_uri_links(content: bytes) -> list[str]:
     for m in re.finditer(rb"/URI\s*\((.*?)\)", content):
         inner = m.group(1)
         try:
-            text = inner.decode("ascii")
+            text = inner.decode("ascii").strip()
             if text and text not in uris:
                 uris.append(text)
         except UnicodeDecodeError:
             try:
-                text = inner.decode("utf-8", errors="replace")
+                text = inner.decode("utf-8", errors="replace").strip()
                 if text and text not in uris:
                     uris.append(text)
             except UnicodeDecodeError:
