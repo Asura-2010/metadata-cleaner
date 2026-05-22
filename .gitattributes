@@ -1,2 +1,3 @@
-# Windows batch files — prevent git from touching encoding/line-endings
+# Windows scripts — prevent git from touching encoding/line-endings
 *.bat -text
+*.ps1 -text
