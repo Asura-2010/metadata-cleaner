@@ -122,47 +122,23 @@ PDF 中的超链接注释（/URI），包含文档中嵌入的所有网址。
 2. **审阅 → 删除文档中的所有批注**
 3. 保存后重新拖入工具处理
 
-## 快速开始
+## 下载安装
 
-### 下载（推荐）
+每次代码更新后，[GitHub Actions](https://github.com/Asura-2010/metadata-cleaner/actions) 自动构建最新版本。
 
 | 平台 | 下载 | 说明 |
 |------|------|------|
-| **macOS** | [MetadataCleaner-1.1.0.dmg](https://github.com/Asura-2010/metadata-cleaner/releases/latest) | 打开后拖入 Applications，开箱即用 |
-| **Windows** | [MetadataCleaner-Setup-1.1.0.exe](https://github.com/Asura-2010/metadata-cleaner/releases/latest) | 运行安装程序，创建桌面快捷方式 |
+| **macOS** | 在 [Actions](https://github.com/Asura-2010/metadata-cleaner/actions) 中最新一次构建 → Artifacts → `macOS-dmg` | 双击 .dmg 打开，拖入 Applications，开箱即用 |
+| **Windows** | 在 [Actions](https://github.com/Asura-2010/metadata-cleaner/actions) 中最新一次构建 → Artifacts → `Windows-exe` | 单个 .exe 文件，直接双击运行，无需安装 |
 
-> 以上安装包已包含 Python 和所有依赖，无需单独安装 Python。
-
-### 从源码运行
-
-**Windows**
-```
-双击 setup.bat → 安装依赖 → 双击 run.vbs（静默启动）
-```
-
-**macOS**
-```
-终端运行 bash setup.sh → 安装依赖 → 双击 run.command
-```
-
-## 发布构建
-
-```bash
-# macOS → 生成 .dmg
-bash build_macos.sh
-
-# Windows → 生成 setup.exe（需安装 Inno Setup 6+）
-build_windows.bat
-```
-
-构建脚本会自动调用 PyInstaller 打包所有依赖，用户无需安装 Python。
+> 以上安装包已内置 Python 和所有依赖，无需单独安装任何东西。
 
 ## 使用方法
 
-### 图形界面（单文件 / 批量均可）
+### 图形界面
 
-- **macOS**：双击 `run.command`（终端自动关闭）
-- **Windows**：双击 `run.vbs`（静默启动，无窗口）
+- **macOS**：双击 `MetadataCleaner.app`
+- **Windows**：双击 `MetadataCleaner.exe`
 
 1. 点击 **「添加文件」**，选择要处理的文件（按住 `Ctrl` 或 `Cmd` 可多选，**支持批量**）
 2. （可选）选中文件 → **右键「查看元数据」**，核对文件中的隐藏信息
@@ -172,17 +148,33 @@ build_windows.bat
 
 ### 拖拽批量处理
 
-把**一个或多个**文件框选后直接拖到 `metadata_cleaner.py` 图标上，无需打开界面，自动处理全部并显示结果。
+把**一个或多个**文件框选后直接拖到应用图标上，无需打开界面，自动处理全部并显示结果。
 
 ### 命令行批量处理
 
 ```bash
-# 处理当前目录下所有 Word 文档
-python3 metadata_cleaner.py *.docx
-
-# 处理所有支持的 Office 和 PDF 文件
 python3 metadata_cleaner.py *.docx *.xlsx *.pptx *.wps *.pdf
 ```
+
+## 从源码运行
+
+```bash
+# 创建虚拟环境并安装依赖
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 启动
+python3 metadata_cleaner.py
+```
+
+## 本地构建
+
+```bash
+bash build.sh          # macOS / Linux
+```
+
+> Windows 或需要跨平台构建直接用 [GitHub Actions](https://github.com/Asura-2010/metadata-cleaner/actions)，`git push` 自动出包。
 
 ## 支持的文件格式
 
@@ -214,8 +206,11 @@ python3 metadata_cleaner.py *.docx *.xlsx *.pptx *.wps *.pdf
 ## 依赖
 
 ```
-pypdf>=5.0.0  (或者 PyPDF2>=3.0.0)
-tkinterdnd2>=0.4.0  (可选，拖拽支持)
+pypdf>=5.0.0
+PyPDF2>=3.0.0
+Pillow>=10.0.0
+pillow-heif>=1.0.0
+tkinterdnd2>=0.4.0
 ```
 
 ## 常见问题
@@ -247,8 +242,8 @@ tkinterdnd2>=0.4.0  (可选，拖拽支持)
 
 <details>
 <summary><b>pip 安装太慢？</b></summary>
-setup 脚本已配置清华镜像。如仍慢，手动切换：
-<pre>pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/</pre>
+手动切换国内镜像：
+<pre>pip install -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt</pre>
 </details>
 
 <details>
