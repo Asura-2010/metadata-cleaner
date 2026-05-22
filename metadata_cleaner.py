@@ -804,6 +804,53 @@ def _scan_pdf_hidden_text(raw: bytes) -> dict[str, list[str]]:
     return result
 
 
+def _extract_structure_tree_alts(reader) -> list[str]:
+    """Traverse the PDF structure tree via pypdf and extract all /Alt text.
+    This catches entries inside compressed objects that raw-byte scanning misses."""
+    alts: list[str] = []
+
+    def _walk(obj, depth: int = 0) -> None:
+        if depth > 8:
+            return
+        if hasattr(obj, "get_object"):
+            obj = obj.get_object()
+        if not hasattr(obj, "keys"):
+            return
+        if "/Alt" in obj:
+            val = obj["/Alt"]
+            if hasattr(val, "get_object"):
+                val = val.get_object()
+            text = str(val).strip()
+            if text:
+                alts.append(text)
+        if "/K" in obj:
+            kids = obj["/K"]
+            if hasattr(kids, "get_object"):
+                kids = kids.get_object()
+            items = kids if isinstance(kids, list) else [kids]
+            for kid in items:
+                _walk(kid, depth + 1)
+
+    try:
+        root = reader.trailer["/Root"]
+        if "/StructTreeRoot" in root:
+            struct = root["/StructTreeRoot"].get_object()
+            _walk(struct)
+    except Exception:
+        pass
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for text in alts:
+        if text not in seen:
+            seen.add(text)
+            unique.append(text)
+
+    # Cap at 40 entries to keep the metadata window manageable
+    return unique[:40]
+
+
 def _read_pdf_metadata(filepath: str) -> dict:
     """Extract metadata from a PDF file — standard info dict, XMP, deep scan,
     page count.  Reads the file once and scans in-memory for best performance."""
@@ -882,15 +929,27 @@ def _read_pdf_metadata(filepath: str) -> dict:
         except Exception:
             pass  # XMP reading can fail on malformed metadata
 
+        # --- Structure tree /Alt image source paths ---
+        struct_alts = _extract_structure_tree_alts(reader)
+        if struct_alts:
+            indexed: dict[str, str] = {}
+            for i, alt in enumerate(struct_alts):
+                key = f"[{i+1}]" if len(struct_alts) > 1 else ""
+                indexed[key] = str(alt)
+            result["图片源路径"] = indexed
+
         if pdf:
             result["PDF 属性"] = pdf
 
     except Exception as exc:
         result["错误"] = {"读取失败": str(exc)}
 
-    # Deep scan for /Alt image paths and /URI links (raw bytes, no decompression)
+    # Deep scan for /URI links and raw /Alt (uncompressed fallback)
     deep = _scan_pdf_hidden_text(raw)
     for category, items in deep.items():
+        # Skip "图片源路径" from raw scan if we already have struct-tree results
+        if category == "图片源路径" and "图片源路径" in result:
+            continue
         if items:
             indexed = {}
             for i, item in enumerate(items):
