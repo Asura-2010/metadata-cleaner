@@ -222,14 +222,25 @@ $pyiArgs = @(
 
 if ($LASTEXITCODE -eq 0) {
     # Clean up build artifacts
+    Write-Host ""
+    Write-Host "[OK] PyInstaller finished."
+    Write-Host "Current dir: $(Get-Location)"
+    Write-Host "Looking for:"
     $cleanup = @("$ScriptDir\build", "$ScriptDir\MetadataCleaner.spec")
     foreach ($p in $cleanup) {
+        Write-Host "  Check: $p"
         if (Test-Path $p) {
-            Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue
-            Write-Host "  Removed: $p"
+            Write-Host "  -> exists, removing..."
+            Remove-Item -Recurse -Force $p
+            Write-Host "  -> Removed: $p"
+        } else {
+            Write-Host "  -> NOT found"
         }
     }
 
+    Write-Host ""
+    Write-Host "Files in $ScriptDir after cleanup:"
+    Get-ChildItem $ScriptDir | ForEach-Object { Write-Host "  $($_.Name)" }
     Write-Host ""
     Write-Host "+==============================================+"
     Write-Host "| Build successful!                            |"
