@@ -299,24 +299,25 @@ def clean_office_file(filepath: str) -> tuple:
 
 def _strip_pdf_alt_text(path: str) -> None:
     """Clear /Alt text from a PDF's structure tree to remove image source
-    paths.  Word converts docx descr attributes to PDF /Alt entries encoded
-    in UTF-16BE.  Uses equal-width padding to keep XREF byte offsets valid."""
+    paths.  Handles both raw binary (original PDFs) and PDF octal-escape
+    notation (after clone_document_from_reader re-serialises strings).
+    Uses equal-width padding to keep XREF byte offsets valid."""
     import re
 
-    def _pad_utf16(m: re.Match) -> bytes:
-        prefix = m.group(1)   # /Alt(BOM)
-        text = m.group(2)     # the UTF-16BE string content
+    def _pad_alt(m: re.Match) -> bytes:
+        prefix = m.group(1)   # /Alt or /Alt (
+        inner = m.group(2)    # content between parens
         suffix = m.group(3)   # )
-        # Replace each UTF-16 code unit (2 bytes) with U+0020 (space = \x00 )
-        padding = b"\x00 " * (len(text) // 2)
+        # Pad inner content with spaces (0x20), keeping length identical
+        padding = b" " * len(inner)
         return prefix + padding + suffix
 
     with open(path, "rb") as f:
         content = f.read()
 
-    # /Alt with UTF-16BE BOM — the BOM eats itself (2 bytes), then the
-    # rest of the string inside parentheses is padded with null+space
-    content = re.sub(rb"(/Alt\(\xfe\xff)((?:[^\\]|\\.)*?)(\))", _pad_utf16, content)
+    # Match /Alt(...) and /Alt (...) — with any content inside parens.
+    # The \\. alternative handles PDF octal escapes like \376\377 inside.
+    content = re.sub(rb"(/Alt\s?\()((?:[^\\]|\\.)*?)(\))", _pad_alt, content)
 
     with open(path, "wb") as f:
         f.write(content)
