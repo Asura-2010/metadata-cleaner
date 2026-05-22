@@ -749,8 +749,56 @@ def _decompress_pdf_stream(content: bytes) -> bytes:
         return content
 
 
+def _scan_pdf_xmp_metadata(content: bytes) -> dict[str, dict[str, str]]:
+    """Extract per-image XMP metadata from PDF content.
+    Returns a summary: {field_label: {unique_value: count}}."""
+    import re as _re
+
+    result: dict[str, dict[str, str]] = {}
+
+    # XMP fields worth reporting (label -> attribute name)
+    xmp_fields = [
+        ("创建工具", "xmp:CreatorTool"),
+        ("软件代理", "stEvt:softwareAgent"),
+        ("创建时间", "xmp:CreateDate"),
+        ("修改时间", "xmp:ModifyDate"),
+        ("元数据日期", "xmp:MetadataDate"),
+        ("标题", "dc:title"),
+        ("描述", "dc:description"),
+        ("作者", "dc:creator"),
+        ("主题", "dc:subject"),
+        ("权利", "dc:rights"),
+        ("来源", "photoshop:Source"),
+        ("评级", "xmp:Rating"),
+    ]
+
+    for label, attr in xmp_fields:
+        # Match attribute="value" or attribute='value'
+        pattern = (attr.encode() + rb'\s*=\s*"([^"]*)"').replace(rb'\\', rb'\\\\')
+        pattern_alt = (attr.encode() + rb"\s*=\s*'([^']*)'")
+
+        values: dict[str, int] = {}
+        for m in _re.finditer(pattern, content):
+            val = m.group(1).decode("utf-8", errors="replace").strip()
+            if val:
+                values[val] = values.get(val, 0) + 1
+        for m in _re.finditer(pattern_alt, content):
+            val = m.group(1).decode("utf-8", errors="replace").strip()
+            if val:
+                values[val] = values.get(val, 0) + 1
+
+        if values:
+            display: dict[str, str] = {}
+            for val, count in values.items():
+                display[val] = f"{count} 张图片" if count > 1 else "1 张图片"
+            result[label] = display
+
+    return result
+
+
 def _scan_pdf_hidden_text(filepath: str) -> dict[str, list[str]]:
-    """Deep scan a PDF for hidden metadata: /Alt image paths and /URI links.
+    """Deep scan a PDF for hidden metadata: /Alt image paths, /URI links,
+    and per-image XMP metadata.
     Scans both uncompressed objects and FlateDecode-compressed streams."""
     import re as _re
     result: dict[str, list[str]] = {}
@@ -814,16 +862,34 @@ def _read_pdf_metadata(filepath: str) -> dict:
     except Exception as exc:
         result["错误"] = {"读取失败": str(exc)}
 
-    # Deep scan for /Alt image paths and /URI links
+    # Deep scan for /Alt image paths, /URI links, and XMP metadata
     deep = _scan_pdf_hidden_text(filepath)
     for category, items in deep.items():
         if items:
-            # Flatten list into dict mapping for display
             indexed = {}
             for i, item in enumerate(items):
                 key = f"[{i+1}]" if len(items) > 1 else ""
                 indexed[key] = str(item)
             result[category] = indexed
+
+    # XMP per-image metadata
+    try:
+        with open(filepath, "rb") as f:
+            raw = f.read()
+        xmp = _scan_pdf_xmp_metadata(raw)
+        for label, values in xmp.items():
+            if values:
+                # Flatten {value: count} to indexed display
+                indexed: dict[str, str] = {}
+                if len(values) == 1:
+                    val, count = next(iter(values.items()))
+                    indexed[""] = f"{val}（{count}）"
+                else:
+                    for i, (val, count) in enumerate(values.items()):
+                        indexed[f"[{i+1}]"] = f"{val}（{count}）"
+                result[f"图片XMP-{label}"] = indexed
+    except OSError:
+        pass
 
     return result
 
@@ -885,7 +951,7 @@ class MetadataCleanerApp:
         ttk.Label(main, text="元数据清除工具", font=("", 16, "bold")).pack(pady=(0, 2))
         ttk.Label(
             main,
-            text="支持 Word / Excel / PPT (.docx/.xlsx/.pptx)  |  WPS (.wps/.et/.dps)  |  PDF",
+            text="支持 Word / Excel / PPT (.docx/.xlsx/.pptx)  |  WPS (.wps/.et/.dps)  |  PDF  |  图片 (.jpg/.png/.gif/.bmp/.tiff/.webp)",
             font=("", 10),
         ).pack(pady=(0, 12))
 
@@ -1067,18 +1133,49 @@ class MetadataCleanerApp:
         txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
 
+        # Configure color tags for metadata display
+        # Category headers — gold/amber, bold
+        txt.tag_configure("cat_header", foreground="#B45309", font=("", 11, "bold"), spacing3=4)
+        txt.tag_configure("cat_warn", foreground="#C2410C", font=("", 11, "bold"), spacing3=4)
+        # Field labels
+        txt.tag_configure("label", foreground="#334155")
+        # Values — high contrast
+        txt.tag_configure("value", foreground="#0F172A")
+        txt.tag_configure("value_warn", foreground="#B91C1C")
+        # Error
+        txt.tag_configure("error", foreground="#DC2626", font=("", 11, "bold"))
+
+        # Warning categories that deserve visual emphasis
+        WARN_CATEGORIES = {
+            "图片源路径", "链接 URL", "批注", "修订",
+            "嵌入图片元数据", "批注和修订",
+        }
+
+        def _is_warn_cat(cat: str) -> bool:
+            if cat in WARN_CATEGORIES:
+                return True
+            if cat.startswith("图片XMP-"):
+                return True
+            if cat.startswith("嵌入图片"):
+                return True
+            return False
+
         # Insert formatted metadata
         txt.configure(state=tk.NORMAL)
         if "错误" in metadata:
             for key, val in metadata["错误"].items():
-                txt.insert(tk.END, f"\n  {key}: {val}\n")
+                txt.insert(tk.END, f"\n{key}: ", "error")
+                txt.insert(tk.END, f"{val}\n", "error")
         else:
             for category, fields in metadata.items():
-                txt.insert(tk.END, f"\n── {category} ──\n\n")
+                header_tag = "cat_warn" if _is_warn_cat(category) else "cat_header"
+                txt.insert(tk.END, f"\n── {category} ──\n\n", header_tag)
                 for label, value in fields.items():
-                    # Clean display: show D: dates nicely
                     display_val = str(value)
-                    txt.insert(tk.END, f"  {label}:  {display_val}\n")
+                    lbl_key = label + ":  " if label else ""
+                    val_tag = "value_warn" if _is_warn_cat(category) else "value"
+                    txt.insert(tk.END, f"  {lbl_key}", "label")
+                    txt.insert(tk.END, f"{display_val}\n", val_tag)
         txt.configure(state=tk.DISABLED)
 
         # Close button
