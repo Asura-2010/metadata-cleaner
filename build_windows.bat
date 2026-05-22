@@ -5,7 +5,7 @@ title 元数据清除工具 — 一键打包
 
 echo.
 echo  =============================================
-echo   元数据清除工具 — 一键打包 (Windows)
+echo   元数据清除工具 — 一键打包 Windows
 echo  =============================================
 echo.
 
@@ -59,8 +59,8 @@ echo.
 echo  +==============================================+
 echo  |  即将从国内镜像自动下载并安装 Python 3.13  |
 echo  |                                              |
-echo  |  !! 安装时请务必勾选:                        |
-echo  |  [v] Add Python to PATH (添加到环境变量)     |
+echo  |  !! 安装时请务必勾选：                       |
+echo  |  [v] Add Python to PATH，添加到环境变量     |
 echo  |                                              |
 echo  |  安装完成后本脚本会自动继续                   |
 echo  +==============================================+
@@ -72,7 +72,7 @@ set PYTHON_URL=https://mirrors.huaweicloud.com/python/3.13.5/python-3.13.5-amd64
 set PYTHON_INSTALLER=%TEMP%\python-3.13.5-amd64.exe
 
 echo.
-echo  正在下载 Python 3.13 (华为云镜像, 约 26MB)...
+echo  正在下载 Python 3.13，华为云镜像，约 26MB...
 echo  如果下载慢请耐心等待...
 echo.
 powershell -Command "& {$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%PYTHON_URL%' -OutFile '%PYTHON_INSTALLER%'}" 2>&1
@@ -101,7 +101,7 @@ echo.
 echo  +------------------------------------------+
 echo  | !! 重要 !! 请勾选:                        |
 echo  | [v] Add Python to PATH                   |
-echo  | (安装界面底部那个复选框)                  |
+echo  |  安装界面底部那个复选框                  |
 echo  +------------------------------------------+
 echo.
 
@@ -163,22 +163,22 @@ echo.
 %PYTHON% -m pip install --upgrade pip
 echo.
 
-echo  [3/5] 安装项目依赖 (依次尝试镜像源，请耐心等待)...
+echo  [3/5] 安装项目依赖：依次尝试镜像源，请耐心等待...
 echo.
 
-echo  尝试镜像 1/4: 清华大学 (https)
+echo  尝试镜像 1/4: 清华大学 https
 %PYTHON% -m pip install --trusted-host pypi.tuna.tsinghua.edu.cn -i https://pypi.tuna.tsinghua.edu.cn/simple/ pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller
 if !errorlevel! equ 0 goto :deps_ok
 
-echo  尝试镜像 2/4: 阿里云 (https)
+echo  尝试镜像 2/4: 阿里云 https
 %PYTHON% -m pip install --trusted-host mirrors.aliyun.com -i https://mirrors.aliyun.com/pypi/simple/ pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller
 if !errorlevel! equ 0 goto :deps_ok
 
-echo  尝试镜像 3/4: 清华大学 (http, 部分网络屏蔽https)
+echo  尝试镜像 3/4: 清华大学 http，部分网络屏蔽https
 %PYTHON% -m pip install --trusted-host pypi.tuna.tsinghua.edu.cn -i http://pypi.tuna.tsinghua.edu.cn/simple/ pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller
 if !errorlevel! equ 0 goto :deps_ok
 
-echo  尝试镜像 4/4: Python 官方源 (可能较慢)
+echo  尝试镜像 4/4: Python 官方源，可能较慢
 %PYTHON% -m pip install pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller
 if !errorlevel! equ 0 goto :deps_ok
 
@@ -221,7 +221,7 @@ echo.
 REM ============================================================
 REM 6. PyInstaller 打包
 REM ============================================================
-echo  [5/5] PyInstaller 打包中 (预计 2-5 分钟，请勿关闭此窗口)...
+echo  [5/5] PyInstaller 打包中，预计 2-5 分钟，请勿关闭此窗口...
 echo  看到 "Building EXE" 字样表示正在工作
 echo.
 
