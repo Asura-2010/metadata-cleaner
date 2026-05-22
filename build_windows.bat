@@ -7,18 +7,58 @@ echo ============================================
 echo   Metadata Cleaner - One-Click Build
 echo ============================================
 echo.
+echo Work dir: %cd%
+echo.
 
-REM ---- Step 1: Try direct commands ----
+REM ---- Check that build_windows.py exists ----
+if not exist "%~dp0build_windows.py" (
+    echo [ERROR] build_windows.py not found.
+    echo Script dir: %~dp0
+    echo.
+    echo Files in this directory:
+    dir /b "%~dp0"
+    pause
+    exit /b 1
+)
+
+REM ---- Step 1: Try python and py commands ----
 python --version >nul 2>&1
-if !errorlevel! equ 0 set "PYTHON=python" & goto :run
+if !errorlevel! equ 0 (
+    echo [OK] Python found ^(PATH^)
+    echo Running: python "%~dp0build_windows.py"
+    echo.
+    python "%~dp0build_windows.py"
+    set "EC=!errorlevel!"
+    echo.
+    echo Exit code: !EC!
+    pause
+    exit /b !EC!
+)
 
 py --version >nul 2>&1
-if !errorlevel! equ 0 set "PYTHON=py" & goto :run
+if !errorlevel! equ 0 (
+    echo [OK] Python found ^(py launcher^)
+    echo Running: py "%~dp0build_windows.py"
+    echo.
+    py "%~dp0build_windows.py"
+    set "EC=!errorlevel!"
+    echo.
+    echo Exit code: !EC!
+    pause
+    exit /b !EC!
+)
 
 REM ---- Step 2: where command ----
 for /f "delims=" %%i in ('where python 2^>nul') do (
-    set "PYTHON=%%i"
-    goto :run
+    echo [OK] Python found: %%i
+    echo Running: "%%i" "%~dp0build_windows.py"
+    echo.
+    "%%i" "%~dp0build_windows.py"
+    set "EC=!errorlevel!"
+    echo.
+    echo Exit code: !EC!
+    pause
+    exit /b !EC!
 )
 
 REM ---- Step 3: Scan registry for any Python 3.7-3.13 ----
@@ -29,8 +69,16 @@ for /l %%v in (13,-1,7) do (
     ) do (
         for /f "tokens=2*" %%a in ('reg query %%~r /ve 2^>nul ^| find "REG_SZ"') do (
             if exist "%%bpython.exe" (
-                set "PYTHON=%%bpython.exe"
-                goto :run
+                set "PY=%%bpython.exe"
+                echo [OK] Python found: !PY!
+                echo Running: "!PY!" "%~dp0build_windows.py"
+                echo.
+                "!PY!" "%~dp0build_windows.py"
+                set "EC=!errorlevel!"
+                echo.
+                echo Exit code: !EC!
+                pause
+                exit /b !EC!
             )
         )
     )
@@ -44,8 +92,16 @@ for %%d in (
 ) do (
     for /d %%p in ("%%~d\Python3*") do (
         if exist "%%p\python.exe" (
-            set "PYTHON=%%p\python.exe"
-            goto :run
+            set "PY=%%p\python.exe"
+            echo [OK] Python found: !PY!
+            echo Running: "!PY!" "%~dp0build_windows.py"
+            echo.
+            "!PY!" "%~dp0build_windows.py"
+            set "EC=!errorlevel!"
+            echo.
+            echo Exit code: !EC!
+            pause
+            exit /b !EC!
         )
     )
 )
@@ -90,45 +146,31 @@ echo.
 echo Wait for installation to finish, then press any key...
 pause >nul
 
-REM After install - try python directly
+REM Try python directly after install
 python --version >nul 2>&1
-if !errorlevel! equ 0 set "PYTHON=python" & goto :run
+if !errorlevel! equ 0 (
+    python "%~dp0build_windows.py"
+    pause
+    exit /b
+)
 
-REM File scan after fresh install
+REM File scan after install
 for %%d in (
     "%LOCALAPPDATA%\Programs\Python"
     "%PROGRAMFILES%"
     "C:\"
 ) do (
     for /d %%p in ("%%~d\Python3*") do (
-        if exist "%%p\python.exe" set "PYTHON=%%p\python.exe"
+        if exist "%%p\python.exe" (
+            "%%p\python.exe" "%~dp0build_windows.py"
+            pause
+            exit /b
+        )
     )
 )
-if defined PYTHON goto :run
 
 echo.
 echo Python still not detected after install.
 echo Try restarting your computer and run this script again.
 pause
 exit /b 1
-
-:run
-echo.
-echo [OK] Python: !PYTHON!
-echo Running build script...
-echo.
-
-"!PYTHON!" build_windows.py 2>&1
-set "EXITCODE=!errorlevel!"
-echo.
-echo ----------------------------------------
-if !EXITCODE! equ 0 (
-    echo Build completed successfully.
-) else (
-    echo Build script exited with code: !EXITCODE!
-    echo If you see errors above, check the messages.
-)
-echo ----------------------------------------
-echo.
-pause
-exit /b !EXITCODE!

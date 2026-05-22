@@ -66,7 +66,7 @@ echo [OK] Python: !PYTHON!
 echo Running setup...
 echo.
 
-"!PYTHON!" setup_windows.py 2>&1
+"!PYTHON!" "%~dp0setup_windows.py" 2>&1
 set "EXITCODE=!errorlevel!"
 echo.
 echo ----------------------------------------
