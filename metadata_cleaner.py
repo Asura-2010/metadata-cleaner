@@ -685,12 +685,107 @@ def _read_image_metadata(data: bytes) -> dict[str, str]:
         return {}
 
 
+def _decode_utf16be(raw_bytes: bytes) -> str:
+    """Decode a UTF-16BE byte string (without BOM).  Handles malformed input."""
+    try:
+        return raw_bytes.decode("utf-16-be")
+    except (UnicodeDecodeError, UnicodeError):
+        return raw_bytes.decode("utf-16-be", errors="replace")
+
+
+def _scan_pdf_alt_text(content: bytes) -> list[str]:
+    """Scan raw PDF bytes for /Alt entries with UTF-16BE encoded paths.
+    Searches both uncompressed objects and ObjStm compressed streams."""
+    paths: list[str] = []
+    # Match /Alt(..) — both plain ASCII and UTF-16BE BOM variants
+    for m in re.finditer(rb"/Alt\((.*?)\)", content):
+        inner = m.group(1)
+        if not inner:
+            continue
+        # UTF-16BE with BOM
+        if inner.startswith(b"\xfe\xff"):
+            text = _decode_utf16be(inner[2:])
+            text = text.replace("\x00", "").strip()
+            if text and text not in paths:
+                paths.append(text)
+        # Plain ASCII (no BOM, detectable printable text)
+        else:
+            try:
+                text = inner.decode("ascii")
+                # Heuristic: only keep if looks like a path or URL
+                if text and ("/" in text or "\\" in text or ":" in text) and text not in paths:
+                    paths.append(text)
+            except UnicodeDecodeError:
+                pass
+    return paths
+
+
+def _scan_pdf_uri_links(content: bytes) -> list[str]:
+    """Scan raw PDF bytes for /URI link annotations."""
+    uris: list[str] = []
+    # Match PDF URI actions: /URI(http://...) or /URI(https://...)
+    for m in re.finditer(rb"/URI\s*\((.*?)\)", content):
+        inner = m.group(1)
+        try:
+            text = inner.decode("ascii")
+            if text and text not in uris:
+                uris.append(text)
+        except UnicodeDecodeError:
+            try:
+                text = inner.decode("utf-8", errors="replace")
+                if text and text not in uris:
+                    uris.append(text)
+            except UnicodeDecodeError:
+                pass
+    return uris
+
+
+def _decompress_pdf_stream(content: bytes) -> bytes:
+    """Try to decompress a PDF stream (FlateDecode). Returns original on failure."""
+    import zlib
+    try:
+        return zlib.decompress(content)
+    except (zlib.error, Exception):
+        return content
+
+
+def _scan_pdf_hidden_text(filepath: str) -> dict[str, list[str]]:
+    """Deep scan a PDF for hidden metadata: /Alt image paths and /URI links.
+    Scans both uncompressed objects and FlateDecode-compressed streams."""
+    import re as _re
+    result: dict[str, list[str]] = {}
+    try:
+        with open(filepath, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return result
+
+    # 1) Scan uncompressed content
+    alt_paths = _scan_pdf_alt_text(raw)
+    uris = _scan_pdf_uri_links(raw)
+
+    # 2) Scan compressed streams — match all stream...endstream blocks
+    for sm in _re.finditer(rb"stream\r?\n(.*?)\rendstream", raw, _re.DOTALL):
+        decompressed = _decompress_pdf_stream(sm.group(1))
+        if decompressed is not sm.group(1):  # was decompressed
+            alt_paths += _scan_pdf_alt_text(decompressed)
+            uris += _scan_pdf_uri_links(decompressed)
+
+    if alt_paths:
+        result["图片源路径"] = alt_paths
+    if uris:
+        result["链接 URL"] = uris
+
+    return result
+
+
 def _read_pdf_metadata(filepath: str) -> dict:
-    """Extract metadata from a PDF file."""
+    """Extract metadata from a PDF file — standard info dict + deep scan."""
     result: dict[str, dict[str, str]] = {}
     if not HAS_PDF_SUPPORT:
         return {"错误": {"PDF 支持": "未安装 pypdf/PyPDF2 库"}}
 
+    # Standard metadata via pypdf
     try:
         with open(filepath, "rb") as f:
             reader = PdfReader(f)
@@ -710,7 +805,6 @@ def _read_pdf_metadata(filepath: str) -> dict:
                 for key, label in pdf_fields.items():
                     val = getattr(info, key[1:].lower(), None) or info.get(key, None)
                     if val:
-                        # Clean up PDF date strings
                         val_str = str(val)
                         if val_str.startswith("D:"):
                             val_str = val_str[2:].replace("'", "")
@@ -719,6 +813,17 @@ def _read_pdf_metadata(filepath: str) -> dict:
                     result["PDF 属性"] = pdf
     except Exception as exc:
         result["错误"] = {"读取失败": str(exc)}
+
+    # Deep scan for /Alt image paths and /URI links
+    deep = _scan_pdf_hidden_text(filepath)
+    for category, items in deep.items():
+        if items:
+            # Flatten list into dict mapping for display
+            indexed = {}
+            for i, item in enumerate(items):
+                key = f"[{i+1}]" if len(items) > 1 else ""
+                indexed[key] = str(item)
+            result[category] = indexed
 
     return result
 
