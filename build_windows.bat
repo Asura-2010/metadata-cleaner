@@ -36,8 +36,8 @@ if not defined PYTHON (
 )
 
 if defined PYTHON (
-    echo Python found: %PYTHON%
-    %PYTHON% build_windows.py
+    echo Python found: !PYTHON!
+    !PYTHON! build_windows.py
     pause
     exit
 )
