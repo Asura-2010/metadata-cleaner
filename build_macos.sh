@@ -48,6 +48,9 @@ hdiutil create \
 # Cleanup staging
 rm -rf dist/dmg
 
+# Cleanup build artifacts
+rm -rf build "${APP_NAME}.spec"
+
 echo ""
 echo "=== Done: dist/${DMG_NAME}.dmg ==="
 ls -lh "dist/${DMG_NAME}.dmg"

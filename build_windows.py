@@ -35,8 +35,8 @@ MSG = {
     "build": "[5/5] PyInstaller 打包中，预计 2-5 分钟，请勿关闭此窗口...",
     "build_ok": "打包成功！",
     "build_fail": "[错误] 打包失败",
-    "output_path": r"dist\元数据清除工具\元数据清除工具.exe",
-    "output_desc": '复制整个"元数据清除工具"文件夹到其他电脑即可直接运行，无需安装 Python。',
+    "output_path": r"dist\MetadataCleaner\MetadataCleaner.exe",
+    "output_desc": 'Copy the "MetadataCleaner" folder to other PCs to run directly, no Python needed.',
     "download_title": "未检测到 Python，从华为云镜像下载安装...",
     "download_progress": "正在下载 Python 3.13，华为云镜像，约 26MB...",
     "download_fail": "自动下载失败，请手动安装 Python",
@@ -210,7 +210,7 @@ def run_pyinstaller(python_exe):
     cmd = [
         python_exe, "-m", "PyInstaller",
         "--windowed",
-        "--name", "元数据清除工具",
+        "--name", "MetadataCleaner",
         "--icon", str(SCRIPT_DIR / "icon.ico"),
         "--hidden-import", "pillow_heif",
         "--hidden-import", "tkinterdnd2",
@@ -267,8 +267,19 @@ def main():
 
     success = run_pyinstaller(python_exe)
 
+    # Clean up build artifacts
+    for path in [SCRIPT_DIR / "build", SCRIPT_DIR / "MetadataCleaner.spec"]:
+        if path.exists():
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink()
+            except Exception:
+                pass
+
     if success:
-        output_dir = SCRIPT_DIR / "dist" / "元数据清除工具"
+        output_dir = SCRIPT_DIR / "dist" / "MetadataCleaner"
         print()
         print_box([
             MSG["build_ok"],
