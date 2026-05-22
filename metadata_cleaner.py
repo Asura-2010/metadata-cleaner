@@ -740,15 +740,6 @@ def _scan_pdf_uri_links(content: bytes) -> list[str]:
     return uris
 
 
-def _decompress_pdf_stream(content: bytes) -> bytes:
-    """Try to decompress a PDF stream (FlateDecode). Returns original on failure."""
-    import zlib
-    try:
-        return zlib.decompress(content)
-    except (zlib.error, Exception):
-        return content
-
-
 def _scan_pdf_xmp_metadata(content: bytes) -> dict[str, dict[str, str]]:
     """Extract per-image XMP metadata from PDF content.
     Returns a summary: {field_label: {unique_value: count}}."""
@@ -796,28 +787,13 @@ def _scan_pdf_xmp_metadata(content: bytes) -> dict[str, dict[str, str]]:
     return result
 
 
-def _scan_pdf_hidden_text(filepath: str) -> dict[str, list[str]]:
-    """Deep scan a PDF for hidden metadata: /Alt image paths, /URI links,
-    and per-image XMP metadata.
-    Scans both uncompressed objects and FlateDecode-compressed streams."""
-    import re as _re
+def _scan_pdf_hidden_text(raw: bytes) -> dict[str, list[str]]:
+    """Scan raw PDF bytes for /Alt image paths and /URI links.
+    Only scans uncompressed content — fast enough for 64MB+ files."""
     result: dict[str, list[str]] = {}
-    try:
-        with open(filepath, "rb") as f:
-            raw = f.read()
-    except OSError:
-        return result
 
-    # 1) Scan uncompressed content
     alt_paths = _scan_pdf_alt_text(raw)
     uris = _scan_pdf_uri_links(raw)
-
-    # 2) Scan compressed streams — match all stream...endstream blocks
-    for sm in _re.finditer(rb"stream\r?\n(.*?)\rendstream", raw, _re.DOTALL):
-        decompressed = _decompress_pdf_stream(sm.group(1))
-        if decompressed is not sm.group(1):  # was decompressed
-            alt_paths += _scan_pdf_alt_text(decompressed)
-            uris += _scan_pdf_uri_links(decompressed)
 
     if alt_paths:
         result["图片源路径"] = alt_paths
@@ -828,42 +804,52 @@ def _scan_pdf_hidden_text(filepath: str) -> dict[str, list[str]]:
 
 
 def _read_pdf_metadata(filepath: str) -> dict:
-    """Extract metadata from a PDF file — standard info dict + deep scan."""
+    """Extract metadata from a PDF file — standard info dict + deep scan.
+    Reads the file once and scans in-memory for best performance."""
     result: dict[str, dict[str, str]] = {}
     if not HAS_PDF_SUPPORT:
         return {"错误": {"PDF 支持": "未安装 pypdf/PyPDF2 库"}}
 
-    # Standard metadata via pypdf
+    import io
+
+    # Read file once into memory, then pass BytesIO to pypdf
     try:
         with open(filepath, "rb") as f:
-            reader = PdfReader(f)
-            info = reader.metadata
-            if info:
-                pdf_fields = {
-                    "/Title": "标题",
-                    "/Author": "作者",
-                    "/Subject": "主题",
-                    "/Keywords": "关键词",
-                    "/Creator": "创建程序",
-                    "/Producer": "生成工具",
-                    "/CreationDate": "创建时间",
-                    "/ModDate": "修改时间",
-                }
-                pdf = {}
-                for key, label in pdf_fields.items():
-                    val = getattr(info, key[1:].lower(), None) or info.get(key, None)
-                    if val:
-                        val_str = str(val)
-                        if val_str.startswith("D:"):
-                            val_str = val_str[2:].replace("'", "")
-                        pdf[label] = val_str
-                if pdf:
-                    result["PDF 属性"] = pdf
+            raw = f.read()
+    except OSError as exc:
+        result["错误"] = {"读取失败": str(exc)}
+        return result
+
+    # Standard metadata via pypdf (uses BytesIO to avoid re-reading)
+    try:
+        reader = PdfReader(io.BytesIO(raw))
+        info = reader.metadata
+        if info:
+            pdf_fields = {
+                "/Title": "标题",
+                "/Author": "作者",
+                "/Subject": "主题",
+                "/Keywords": "关键词",
+                "/Creator": "创建程序",
+                "/Producer": "生成工具",
+                "/CreationDate": "创建时间",
+                "/ModDate": "修改时间",
+            }
+            pdf = {}
+            for key, label in pdf_fields.items():
+                val = getattr(info, key[1:].lower(), None) or info.get(key, None)
+                if val:
+                    val_str = str(val)
+                    if val_str.startswith("D:"):
+                        val_str = val_str[2:].replace("'", "")
+                    pdf[label] = val_str
+            if pdf:
+                result["PDF 属性"] = pdf
     except Exception as exc:
         result["错误"] = {"读取失败": str(exc)}
 
-    # Deep scan for /Alt image paths, /URI links, and XMP metadata
-    deep = _scan_pdf_hidden_text(filepath)
+    # Deep scan for /Alt image paths and /URI links (raw bytes, no decompression)
+    deep = _scan_pdf_hidden_text(raw)
     for category, items in deep.items():
         if items:
             indexed = {}
@@ -872,24 +858,18 @@ def _read_pdf_metadata(filepath: str) -> dict:
                 indexed[key] = str(item)
             result[category] = indexed
 
-    # XMP per-image metadata
-    try:
-        with open(filepath, "rb") as f:
-            raw = f.read()
-        xmp = _scan_pdf_xmp_metadata(raw)
-        for label, values in xmp.items():
-            if values:
-                # Flatten {value: count} to indexed display
-                indexed: dict[str, str] = {}
-                if len(values) == 1:
-                    val, count = next(iter(values.items()))
-                    indexed[""] = f"{val}（{count}）"
-                else:
-                    for i, (val, count) in enumerate(values.items()):
-                        indexed[f"[{i+1}]"] = f"{val}（{count}）"
-                result[f"图片XMP-{label}"] = indexed
-    except OSError:
-        pass
+    # XMP per-image metadata (scan raw bytes — XMP is typically uncompressed)
+    xmp = _scan_pdf_xmp_metadata(raw)
+    for label, values in xmp.items():
+        if values:
+            indexed: dict[str, str] = {}
+            if len(values) == 1:
+                val, count = next(iter(values.items()))
+                indexed[""] = f"{val}（{count}）"
+            else:
+                for i, (val, count) in enumerate(values.items()):
+                    indexed[f"[{i+1}]"] = f"{val}（{count}）"
+            result[f"图片XMP-{label}"] = indexed
 
     return result
 
