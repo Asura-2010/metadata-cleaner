@@ -12,7 +12,7 @@ echo.
 REM ============================================================
 REM 1. 查找或安装 Python
 REM ============================================================
-echo  [1/6] 检查 Python 环境...
+echo  [1/5] 检查 Python 环境...
 echo.
 
 set PYTHON=
@@ -156,38 +156,53 @@ echo  [OK] Python 就绪
 echo.
 
 REM ============================================================
-REM 2. 配置 pip 国内镜像
+REM 2. 安装依赖 (依次尝试多个镜像源)
 REM ============================================================
-echo  [2/6] 配置 pip 清华镜像 (下载更快)...
-%PYTHON% -m pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>&1
-echo  [OK]
+echo  [2/5] 升级 pip...
+echo.
+%PYTHON% -m pip install --upgrade pip
 echo.
 
-REM ============================================================
-REM 3. 安装依赖
-REM ============================================================
-echo  [3/6] 安装项目依赖 (首次运行需要下载，请耐心等待)...
+echo  [3/5] 安装项目依赖 (依次尝试镜像源，请耐心等待)...
 echo.
-%PYTHON% -m pip install --upgrade pip --quiet
+
+echo  尝试镜像 1/4: 清华大学 (https)
+%PYTHON% -m pip install --trusted-host pypi.tuna.tsinghua.edu.cn -i https://pypi.tuna.tsinghua.edu.cn/simple/ pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller
+if !errorlevel! equ 0 goto :deps_ok
+
+echo  尝试镜像 2/4: 阿里云 (https)
+%PYTHON% -m pip install --trusted-host mirrors.aliyun.com -i https://mirrors.aliyun.com/pypi/simple/ pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller
+if !errorlevel! equ 0 goto :deps_ok
+
+echo  尝试镜像 3/4: 清华大学 (http, 部分网络屏蔽https)
+%PYTHON% -m pip install --trusted-host pypi.tuna.tsinghua.edu.cn -i http://pypi.tuna.tsinghua.edu.cn/simple/ pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller
+if !errorlevel! equ 0 goto :deps_ok
+
+echo  尝试镜像 4/4: Python 官方源 (可能较慢)
 %PYTHON% -m pip install pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller
-if %errorlevel% neq 0 (
-    echo.
-    echo  [警告] 清华镜像失败，切换阿里云重试...
-    %PYTHON% -m pip install pypdf PyPDF2 Pillow pillow-heif tkinterdnd2 pyinstaller -i https://mirrors.aliyun.com/pypi/simple/
-    if !errorlevel! neq 0 (
-        echo.
-        echo  [错误] 依赖安装失败，请检查网络连接
-        pause
-        exit /b 1
-    )
-)
-echo  [OK]
+if !errorlevel! equ 0 goto :deps_ok
+
+echo.
+echo  +==========================================+
+echo  |  [X] 所有镜像源均安装失败！               |
+echo  |                                          |
+echo  |  请检查：                                 |
+echo  |  1. 网络连接是否正常                       |
+echo  |  2. 是否开启了代理/VPN导致镜像不可达       |
+echo  |  3. 公司防火墙是否阻止了 Python 联网       |
+echo  |                                          |
+echo  |  手动测试: pip install pypdf              |
+echo  +==========================================+
+pause
+exit /b 1
+
+:deps_ok
+echo  [OK] 依赖安装成功
 echo.
 
+
 REM ============================================================
-REM 4. 读取版本号
-REM ============================================================
-echo  [4/6] 读取版本号...
+echo  [4/5] 读取版本号...
 %PYTHON% -c "from metadata_cleaner import __version__; print(__version__)" > "%TEMP%\mc_version.tmp"
 set /p VERSION=<"%TEMP%\mc_version.tmp"
 del "%TEMP%\mc_version.tmp" 2>nul
@@ -197,7 +212,7 @@ echo.
 REM ============================================================
 REM 5. 清理旧构建
 REM ============================================================
-echo  [5/6] 清理旧构建...
+echo  清理旧构建...
 if exist build rmdir /s /q build
 if exist dist  rmdir /s /q dist
 echo  [OK]
@@ -206,7 +221,7 @@ echo.
 REM ============================================================
 REM 6. PyInstaller 打包
 REM ============================================================
-echo  [6/6] PyInstaller 打包中 (预计 2-5 分钟，请勿关闭此窗口)...
+echo  [5/5] PyInstaller 打包中 (预计 2-5 分钟，请勿关闭此窗口)...
 echo  看到 "Building EXE" 字样表示正在工作
 echo.
 
