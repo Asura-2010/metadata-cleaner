@@ -805,8 +805,8 @@ def _scan_pdf_hidden_text(raw: bytes) -> dict[str, list[str]]:
 
 
 def _read_pdf_metadata(filepath: str) -> dict:
-    """Extract metadata from a PDF file — standard info dict + deep scan.
-    Reads the file once and scans in-memory for best performance."""
+    """Extract metadata from a PDF file — standard info dict, XMP, deep scan,
+    page count.  Reads the file once and scans in-memory for best performance."""
     result: dict[str, dict[str, str]] = {}
     if not HAS_PDF_SUPPORT:
         return {"错误": {"PDF 支持": "未安装 pypdf/PyPDF2 库"}}
@@ -825,8 +825,11 @@ def _read_pdf_metadata(filepath: str) -> dict:
     try:
         reader = PdfReader(io.BytesIO(raw))
         info = reader.metadata
+        pdf: dict[str, str] = {}
+
+        # --- PDF info dict fields ---
         if info:
-            pdf_fields = {
+            info_fields = {
                 "/Title": "标题",
                 "/Author": "作者",
                 "/Subject": "主题",
@@ -835,17 +838,53 @@ def _read_pdf_metadata(filepath: str) -> dict:
                 "/Producer": "生成工具",
                 "/CreationDate": "创建时间",
                 "/ModDate": "修改时间",
+                "/Comments": "注释",
+                "/Company": "公司",
+                "/SourceModified": "源修改时间",
             }
-            pdf = {}
-            for key, label in pdf_fields.items():
+            for key, label in info_fields.items():
                 val = getattr(info, key[1:].lower(), None) or info.get(key, None)
-                if val:
-                    val_str = str(val)
+                if val and str(val).strip():
+                    val_str = str(val).strip()
                     if val_str.startswith("D:"):
                         val_str = val_str[2:].replace("'", "")
                     pdf[label] = val_str
-            if pdf:
-                result["PDF 属性"] = pdf
+
+        # --- Page count ---
+        try:
+            pdf["页数"] = str(len(reader.pages))
+        except Exception:
+            pass
+
+        # --- Document-level XMP metadata ---
+        try:
+            xmp = reader.xmp_metadata
+            if xmp:
+                xmp_fields = {
+                    "xmp_creator_tool": "XMP-创建工具",
+                    "xmp_create_date": "XMP-创建时间",
+                    "xmp_modify_date": "XMP-修改时间",
+                    "xmp_metadata_date": "XMP-元数据日期",
+                    "xmpmm_document_id": "XMP-文档ID",
+                    "dc_title": "XMP-标题",
+                    "dc_description": "XMP-描述",
+                    "dc_format": "XMP-格式",
+                }
+                for attr, label in xmp_fields.items():
+                    val = getattr(xmp, attr, None)
+                    if val:
+                        val_str = str(val)
+                        # Unwrap XMP lang-alt dicts
+                        if isinstance(val, dict):
+                            val_str = str(val.get("x-default", list(val.values())[0] if val else ""))
+                        if val_str.strip():
+                            pdf[label] = val_str.strip()
+        except Exception:
+            pass  # XMP reading can fail on malformed metadata
+
+        if pdf:
+            result["PDF 属性"] = pdf
+
     except Exception as exc:
         result["错误"] = {"读取失败": str(exc)}
 
