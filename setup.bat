@@ -8,16 +8,14 @@ echo   Metadata Cleaner - Setup Wizard
 echo ============================================
 echo.
 
-REM ---- Step 1: Try python command ----
+REM ---- Step 1: Try direct commands ----
 python --version >nul 2>&1
 if !errorlevel! equ 0 (
-    echo [OK] Python found ^(system PATH^)
+    echo [OK] Python found ^(PATH^)
     python setup_windows.py
     pause
     exit /b
 )
-
-REM ---- Step 2: Try py launcher ----
 py --version >nul 2>&1
 if !errorlevel! equ 0 (
     echo [OK] Python found ^(py launcher^)
@@ -26,45 +24,55 @@ if !errorlevel! equ 0 (
     exit /b
 )
 
-REM ---- Step 3: Scan registry ----
-for /f "tokens=2*" %%a in ('reg query "HKCU\SOFTWARE\Python\PythonCore\3.13\InstallPath" /ve 2^>nul ^| find "REG_SZ"') do set "PYEXE=%%bpython.exe"
-if defined PYEXE if exist "!PYEXE!" (
-    echo [OK] Python found ^(registry^)
-    "!PYEXE!" setup_windows.py
-    pause
-    exit /b
+REM ---- Step 2: where command ----
+for /f "delims=" %%i in ('where python 2^>nul') do (
+    set "PYEXE=%%i"
+    goto :found
 )
 
-for /f "tokens=2*" %%a in ('reg query "HKLM\SOFTWARE\Python\PythonCore\3.13\InstallPath" /ve 2^>nul ^| find "REG_SZ"') do set "PYEXE=%%bpython.exe"
-if defined PYEXE if exist "!PYEXE!" (
-    echo [OK] Python found ^(registry^)
-    "!PYEXE!" setup_windows.py
-    pause
-    exit /b
+REM ---- Step 3: Scan registry for any Python 3.7-3.13 ----
+for /l %%v in (13,-1,7) do (
+    for %%r in (
+        "HKCU\SOFTWARE\Python\PythonCore\3.%%v\InstallPath"
+        "HKLM\SOFTWARE\Python\PythonCore\3.%%v\InstallPath"
+    ) do (
+        for /f "tokens=2*" %%a in ('reg query %%~r /ve 2^>nul ^| find "REG_SZ"') do (
+            if exist "%%bpython.exe" (
+                set "PYEXE=%%bpython.exe"
+                goto :found
+            )
+        )
+    )
 )
 
-REM ---- Step 4: Scan common folders ----
+REM ---- Step 4: Scan file system for any Python3* folder ----
 for %%d in (
-    "%LOCALAPPDATA%\Programs\Python\Python313"
-    "%PROGRAMFILES%\Python313"
-    "C:\Python313"
+    "%LOCALAPPDATA%\Programs\Python"
+    "%PROGRAMFILES%"
+    "C:\"
 ) do (
-    if exist "%%~d\python.exe" set "PYEXE=%%~d\python.exe"
-)
-if defined PYEXE (
-    echo [OK] Python found ^(file scan^)
-    "!PYEXE!" setup_windows.py
-    pause
-    exit /b
+    for /d %%p in ("%%~d\Python3*") do (
+        if exist "%%p\python.exe" (
+            set "PYEXE=%%p\python.exe"
+            goto :found
+        )
+    )
 )
 
-REM ---- Not found ----
+echo.
 echo Python 3 not found.
 echo.
-echo Please install Python 3 first:
+echo Install Python 3 from:
 echo   https://mirrors.tuna.tsinghua.edu.cn/python/
 echo.
-echo IMPORTANT: Check [v] Add Python to PATH during install.
-echo.
+echo Then run this script again.
 pause
 exit /b 1
+
+:found
+echo.
+echo [OK] Python found: !PYEXE!
+echo.
+"!PYEXE!" setup_windows.py
+pause
+exit /b

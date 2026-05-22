@@ -8,17 +8,14 @@ echo   Metadata Cleaner - One-Click Build
 echo ============================================
 echo.
 
-REM ---- Step 1: Try python command ----
-echo [1] Checking Python...
+REM ---- Step 1: Try direct commands ----
 python --version >nul 2>&1
 if !errorlevel! equ 0 (
-    echo [OK] Python found ^(system PATH^)
+    echo [OK] Python found ^(PATH^)
     python build_windows.py
     pause
     exit /b
 )
-
-REM ---- Step 2: Try py launcher ----
 py --version >nul 2>&1
 if !errorlevel! equ 0 (
     echo [OK] Python found ^(py launcher^)
@@ -27,109 +24,114 @@ if !errorlevel! equ 0 (
     exit /b
 )
 
-REM ---- Step 3: Scan registry for Python installs ----
-for /f "tokens=2*" %%a in ('reg query "HKCU\SOFTWARE\Python\PythonCore\3.13\InstallPath" /ve 2^>nul ^| find "REG_SZ"') do set "PYEXE=%%bpython.exe"
-if defined PYEXE if exist "!PYEXE!" (
-    echo [OK] Python found ^(registry^)
-    "!PYEXE!" build_windows.py
-    pause
-    exit /b
+REM ---- Step 2: where command ----
+for /f "delims=" %%i in ('where python 2^>nul') do (
+    set "PYEXE=%%i"
+    goto :found
 )
 
-for /f "tokens=2*" %%a in ('reg query "HKLM\SOFTWARE\Python\PythonCore\3.13\InstallPath" /ve 2^>nul ^| find "REG_SZ"') do set "PYEXE=%%bpython.exe"
-if defined PYEXE if exist "!PYEXE!" (
-    echo [OK] Python found ^(registry^)
-    "!PYEXE!" build_windows.py
-    pause
-    exit /b
-)
-
-REM ---- Step 4: Scan common install folders ----
-for %%d in (
-    "%LOCALAPPDATA%\Programs\Python\Python313"
-    "%PROGRAMFILES%\Python313"
-    "C:\Python313"
-) do (
-    if exist "%%~d\python.exe" (
-        set "PYEXE=%%~d\python.exe"
+REM ---- Step 3: Scan registry for any Python 3.7-3.13 ----
+for /l %%v in (13,-1,7) do (
+    for %%r in (
+        "HKCU\SOFTWARE\Python\PythonCore\3.%%v\InstallPath"
+        "HKLM\SOFTWARE\Python\PythonCore\3.%%v\InstallPath"
+    ) do (
+        for /f "tokens=2*" %%a in ('reg query %%~r /ve 2^>nul ^| find "REG_SZ"') do (
+            if exist "%%bpython.exe" (
+                set "PYEXE=%%bpython.exe"
+                goto :found
+            )
+        )
     )
 )
-if defined PYEXE (
-    echo [OK] Python found ^(file scan^)
-    "!PYEXE!" build_windows.py
-    pause
-    exit /b
+
+REM ---- Step 4: Scan file system for any Python3* folder ----
+for %%d in (
+    "%LOCALAPPDATA%\Programs\Python"
+    "%PROGRAMFILES%"
+    "C:\"
+) do (
+    for /d %%p in ("%%~d\Python3*") do (
+        if exist "%%p\python.exe" (
+            set "PYEXE=%%p\python.exe"
+            goto :found
+        )
+    )
 )
 
 REM ---- Python NOT found - download and install ----
 echo.
-echo Python 3.13 is required but was not found.
+echo Python 3 was not found on this computer.
 echo.
-echo The script will now download Python from a China mirror.
-echo Make sure to check [v] Add Python to PATH during install!
+echo The script will download Python 3.13 from a China mirror.
+echo IMPORTANT: Check [v] Add Python to PATH during install!
 echo.
 choice /c yn /n /m "Download and install Python 3.13? [Y]es [N]o: "
 if !errorlevel! equ 2 exit /b 1
 
+set "URL=https://mirrors.tuna.tsinghua.edu.cn/python/3.13.5/python-3.13.5-amd64.exe"
+set "INSTALLER=%TEMP%\python-3.13.5-amd64.exe"
+
 echo.
 echo Downloading Python 3.13 from Tsinghua mirror...
-echo This may take a few minutes...
-echo.
-
-set "INSTALLER=%TEMP%\python-3.13.5-amd64.exe"
-set "URL=https://mirrors.tuna.tsinghua.edu.cn/python/3.13.5/python-3.13.5-amd64.exe"
-
-powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '!URL!' -OutFile '!INSTALLER!'"
+powershell -Command "Invoke-WebRequest -Uri '!URL!' -OutFile '!INSTALLER!'"
 
 if not exist "!INSTALLER!" (
-    echo Tsinghua mirror failed, trying backup URL...
+    echo Tsinghua failed, trying Huawei mirror...
     set "URL=https://repo.huaweicloud.com/python/3.13.5/python-3.13.5-amd64.exe"
     powershell -Command "Invoke-WebRequest -Uri '!URL!' -OutFile '!INSTALLER!'"
 )
 
 if not exist "!INSTALLER!" (
-    echo Download failed. Please install Python manually:
+    echo.
+    echo Download failed. Install Python manually:
     echo   https://mirrors.tuna.tsinghua.edu.cn/python/3.13.5/
+    echo.
+    echo Then run this script again.
     pause
     exit /b 1
 )
 
-echo Download complete. Launching installer...
-echo [!!] CRITICAL: Check [v] Add Python to PATH
 echo.
-
+echo Installing Python 3.13...
+echo [!!] Make sure to CHECK: [v] Add Python to PATH
 "!INSTALLER!" /passive PrependPath=1 InstallAllUsers=0 Include_test=0
 
 echo.
-echo Installation finished. Press any key to continue...
+echo Wait for installation to finish, then press any key...
 pause >nul
 
-REM Re-check for Python after install
+REM After install - re-scan everything
 python --version >nul 2>&1
 if !errorlevel! equ 0 (
+    echo [OK] Python ready
     python build_windows.py
     pause
     exit /b
 )
 
-REM Scan again after fresh install
+REM File scan after fresh install
 for %%d in (
-    "%LOCALAPPDATA%\Programs\Python\Python313"
-    "%PROGRAMFILES%\Python313"
-    "C:\Python313"
+    "%LOCALAPPDATA%\Programs\Python"
+    "%PROGRAMFILES%"
+    "C:\"
 ) do (
-    if exist "%%~d\python.exe" set "PYEXE=%%~d\python.exe"
+    for /d %%p in ("%%~d\Python3*") do (
+        if exist "%%p\python.exe" set "PYEXE=%%p\python.exe"
+    )
 )
-if defined PYEXE (
-    "!PYEXE!" build_windows.py
-    pause
-    exit /b
-)
+if defined PYEXE goto :found
 
+echo.
 echo Python still not detected after install.
 echo Try restarting your computer and run this script again.
-echo.
-echo Or install manually from:
-echo   https://mirrors.tuna.tsinghua.edu.cn/python/3.13.5/
 pause
 exit /b 1
+
+:found
+echo.
+echo [OK] Python found: !PYEXE!
+echo.
+"!PYEXE!" build_windows.py
+pause
+exit /b
