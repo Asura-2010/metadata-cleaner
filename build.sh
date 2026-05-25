@@ -154,12 +154,11 @@ case "${OS_TYPE}" in
         # Check for Wine-based Windows cross-build
         WINE_PYTHON=""
         for wp in \
-            "${HOME}/.wine/drive_c/Python313/python.exe" \
-            "${HOME}/.wine/drive_c/Python312/python.exe" \
-            "${HOME}/.wine/drive_c/Python311/python.exe" \
-            "${HOME}/.wine/drive_c/users/${USER}/AppData/Local/Programs/Python/Python313/python.exe" \
-            "${HOME}/.wine/drive_c/users/${USER}/AppData/Local/Programs/Python/Python312/python.exe" \
-            "C:/Python313/python.exe" \
+            "${HOME}/.wine/drive_c/Python314/python.exe" \
+            "${HOME}/.wine/drive_c/Python314/python.exe" \
+            "${HOME}/.wine/drive_c/users/${USER}/AppData/Local/Programs/Python/Python314/python.exe" \
+            "${HOME}/.wine/drive_c/users/${USER}/AppData/Local/Programs/Python/Python314/python.exe" \
+            "C:/Python314/python.exe" \
             "$(which wine 2>/dev/null && wine cmd /c 'where python' 2>/dev/null | head -1 | tr -d '\r')" \
             ; do
             if [ -n "${wp}" ] && [ -f "${wp}" ]; then
