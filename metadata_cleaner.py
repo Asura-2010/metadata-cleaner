@@ -1379,96 +1379,66 @@ class MetadataCleanerApp:
 
     def _show_about(self):
         """Show about dialog with program info and usage help."""
-        about_text = (
-            "元数据清除工具\n"
-            f"版本 {__version__}\n"
-            "=" * 50 + "\n\n"
-            "版权声明：\n"
-            "本程序由 Asura 开发，保留所有权利。\n\n"
-            "功能说明：\n"
-            "支持清除以下文件类型的元数据：\n"
-            "  - Microsoft Office (Word/Excel/PowerPoint)\n"
-            "    .docx / .xlsx / .pptx\n"
-            "  - WPS Office\n"
-            "    .wps / .et / .dps\n"
-            "  - PDF 文档\n"
-            "  - 图片文件\n"
-            "    .jpg / .png / .gif / .bmp / .tiff / .webp / .heic\n\n"
-            "可清除的元数据包括：\n"
-            "  作者、创建时间、修改时间、公司、版本等基本信息\n\n"
-            "  自定义属性（custom.xml）\n"
-            "    老版本 Office 或第三方插件写入的自定义字段\n\n"
-            "  第三方插件残留信息\n"
-            "    SharePoint、云盘同步工具等写入的路径、标识符、内部编号\n\n"
-            "  嵌入图片元数据\n"
-            "    从微信、QQ、截图工具等粘贴的图片携带：\n"
-            "    - 创建软件（如 Adobe Photoshop）\n"
-            "    - 修改时间戳\n"
-            "    - EXIF 数据（分辨率、色彩空间、ICC 配置文件）\n"
-            "    - PNG 文本块（原始文件名、软件标识）\n"
-            "    采用无损方式剥离，不影响画质\n\n"
-            "  图片源路径（document.xml descr 属性）\n"
-            "    这是最隐蔽的泄露点！\n"
-            "    Word 中插入/拖拽图片时，原始路径被记录在 XML 中：\n"
-            "    - 微信截图：C:\\Users\\xxx\\AppData\\Local\\Temp\\WeChat Files\\...\\png\n"
-            "    - 浏览器缓存：C:\\Users\\xxx\\...\\INetCache\\Content.Word\\...jpg\n"
-            "    - 网络下载：https://example.com/project/...png\n"
-            "    这些路径在 Word 中完全不可见，但转 PDF 后在 Acrobat\n"
-            "    鼠标悬停图片时直接显示，可暴露用户名和目录结构\n\n"
-            "重要提示：\n"
-            "★★★ 全程本地处理，文件不会上传到网络 ★★★\n\n"
-            "注意事项：\n"
-            "  - 本工具清除文件属性元数据\n"
-            "  - 不清除文档正文中的批注与修订记录\n"
-            "    （请在 Office/WPS 中手动处理）\n"
-            "  - 旧版二进制格式 (.doc/.xls/.ppt) 不支持\n"
-            "    请另存为新版格式后再处理\n\n"
-            "使用方式：\n"
-            "  1. 点击「添加文件」选择文件\n"
-            "  2. 可拖拽文件到窗口中\n"
-            "  3. 点击「查看元数据」预览\n"
-            "  4. 点击「清除元数据」执行清理\n"
-        )
         dlg = tk.Toplevel(self.root)
         dlg.title("关于")
-        dlg.geometry("420x500")
+        dlg.geometry("420x520")
         dlg.transient(self.root)
         dlg.grab_set()
 
         content = ttk.Frame(dlg, padding="16")
         content.pack(fill=tk.BOTH, expand=True)
 
-        txt = tk.Text(content, wrap=tk.WORD, font=("", 11), state=tk.DISABLED)
+        txt = tk.Text(content, wrap=tk.WORD, font=("", 11), state=tk.DISABLED, height=28)
         sb = ttk.Scrollbar(content, command=txt.yview)
         txt.configure(yscrollcommand=sb.set)
         txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
 
         txt.tag_configure("title", font=("", 14, "bold"), foreground="#1a1a1a")
-        txt.tag_configure("heading", font=("", 11, "bold"), foreground="#333333", spacing3=6)
-        txt.tag_configure("body", foreground="#444444", spacing3=2)
-        txt.tag_configure("highlight", foreground="#c0392b", font=("", 11, "bold"))
-        txt.tag_configure("warning", foreground="#c0392b", font=("", 10, "bold"))
+        txt.tag_configure("heading", font=("", 11, "bold"), foreground="#333333", spacing3=4)
+        txt.tag_configure("body", foreground="#444444", spacing3=1)
+        txt.tag_configure("highlight", foreground="#c0392b", font=("", 11, "bold"), spacing3=4)
 
         txt.configure(state=tk.NORMAL)
-        lines = about_text.split("\n")
-        for line in lines:
-            if line.startswith("="):
-                continue
-            elif line.startswith("元数据清除工具"):
-                txt.insert(tk.END, line + "\n", "title")
-            elif line.startswith("版本"):
-                txt.insert(tk.END, line + "\n", "body")
-            elif line in ("版权声明", "功能说明", "重要提示", "注意事项", "使用方式"):
-                txt.insert(tk.END, "\n" + line + "\n", "heading")
-            elif "全程本地处理" in line:
-                txt.insert(tk.END, line + "\n", "highlight")
-            elif line.startswith("  -") or line.startswith("    "):
-                txt.insert(tk.END, line + "\n", "body")
-            elif line and line[0].isdigit():
-                txt.insert(tk.END, line + "\n", "body")
-            else:
-                txt.insert(tk.END, line + "\n", "body")
+
+        # Title
+        txt.insert(tk.END, "元数据清除工具\n", "title")
+        txt.insert(tk.END, f"版本 {__version__}\n\n", "body")
+
+        # Copyright
+        txt.insert(tk.END, "版权声明\n", "heading")
+        txt.insert(tk.END, "本程序由 Asura 开发，保留所有权利。\n\n", "body")
+
+        # Supported formats
+        txt.insert(tk.END, "支持文件类型\n", "heading")
+        txt.insert(tk.END, "Microsoft Office: .docx / .xlsx / .pptx\n", "body")
+        txt.insert(tk.END, "WPS Office: .wps / .et / .dps\n", "body")
+        txt.insert(tk.END, "PDF 文档\n", "body")
+        txt.insert(tk.END, "图片文件: .jpg / .png / .gif / .bmp / .tiff / .webp / .heic\n\n", "body")
+
+        # Cleanable metadata
+        txt.insert(tk.END, "可清除的元数据包括\n", "heading")
+        txt.insert(tk.END, "作者、创建时间、修改时间、公司、版本等基本信息\n", "body")
+        txt.insert(tk.END, "自定义属性（custom.xml）- 老版本 Office 或第三方插件残留\n", "body")
+        txt.insert(tk.END, "第三方插件信息 - SharePoint、云盘同步工具等写入的路径和标识符\n", "body")
+        txt.insert(tk.END, "嵌入图片元数据 - 从微信、QQ、截图工具粘贴的图片携带的隐藏信息\n", "body")
+        txt.insert(tk.END, "图片源路径（document.xml descr 属性）- 最隐蔽的泄露点\n\n", "body")
+
+        # Privacy highlight
+        txt.insert(tk.END, "★★★ 全程本地处理，文件不会上传到网络 ★★★\n\n", "highlight")
+
+        # Notes
+        txt.insert(tk.END, "注意事项\n", "heading")
+        txt.insert(tk.END, "本工具清除文件属性元数据，不清除文档正文中的批注与修订记录。\n", "body")
+        txt.insert(tk.END, "旧版二进制格式（.doc/.xls/.ppt）不支持，请另存为新版格式后再处理。\n\n", "body")
+
+        # Usage
+        txt.insert(tk.END, "使用方式\n", "heading")
+        txt.insert(tk.END, "1. 点击「添加文件」选择文件\n", "body")
+        txt.insert(tk.END, "2. 可拖拽文件到窗口中\n", "body")
+        txt.insert(tk.END, "3. 点击「查看元数据」预览\n", "body")
+        txt.insert(tk.END, "4. 点击「清除元数据」执行清理\n", "body")
+
         txt.configure(state=tk.DISABLED)
 
         btn_frame = ttk.Frame(dlg, padding="8")
