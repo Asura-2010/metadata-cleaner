@@ -1103,8 +1103,24 @@ class MetadataCleanerApp:
         self.root.minsize(500, 380)
 
         # Set window icon (Windows taskbar and thumbnail)
-        if sys.platform == "win32" and os.path.exists("icon.ico"):
-            self.root.iconbitmap("icon.ico")
+        if sys.platform == "win32":
+            # In PyInstaller onefile mode, icon is bundled via --add-data
+            if getattr(sys, "_MEIPASS", None):
+                icon_path = os.path.join(sys._MEIPASS, "icon.ico")
+            else:
+                icon_path = "icon.ico"
+            if os.path.exists(icon_path):
+                try:
+                    # Use PhotoImage as fallback if iconbitmap fails
+                    from PIL import Image
+                    img = Image.open(icon_path)
+                    photo = tk.PhotoImage(file=icon_path)
+                    self.root.iconphoto(True, photo)
+                except Exception:
+                    try:
+                        self.root.iconbitmap(icon_path)
+                    except Exception:
+                        pass  # icon loading failed, continue without icon
 
         self.files: list[str] = []
         self._cleaning = False  # guard against closing during processing
