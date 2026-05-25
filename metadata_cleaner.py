@@ -1605,17 +1605,14 @@ def cli_mode(paths: list[str]):
 
 def main():
     global HAS_DND
+    # TkinterDnD creates an extra "tk" blank window on macOS, skip it
+    if sys.platform == "darwin":
+        HAS_DND = False
+
     if len(sys.argv) > 1:
         cli_mode(sys.argv[1:])
     else:
-        if HAS_DND:
-            try:
-                root = TkinterDnD.Tk()
-            except RuntimeError:
-                HAS_DND = False
-                root = tk.Tk()
-        else:
-            root = tk.Tk()
+        root = tk.Tk()
         MetadataCleanerApp(root)
         root.mainloop()
 
