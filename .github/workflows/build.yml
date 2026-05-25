@@ -99,16 +99,18 @@ jobs:
             --noconfirm `
             metadata_cleaner.py
 
-      - name: Rename with version
+      - name: Package Windows
         shell: bash
         run: |
-          mv dist/MetadataCleaner.exe "dist/MetadataCleaner-${{ steps.version.outputs.version }}-Windows.exe"
+          cd dist
+          powershell -Command "Compress-Archive -Path 'MetadataCleaner.exe' -DestinationPath 'MetadataCleaner-${{ steps.version.outputs.version }}-Windows.zip' -Force"
+          rm -f MetadataCleaner.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Windows-exe
-          path: dist/MetadataCleaner-*-Windows.exe
+          path: dist/MetadataCleaner-*-Windows.zip
 
   # ── Create GitHub Release ────────────────────────────────
   create-release:
@@ -156,8 +158,8 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
-            --notes "自动构建。macOS 下载 .dmg，Windows 下载 .exe。" \
+            --notes "自动构建。macOS 下载 .dmg，Windows 下载 .zip。" \
             MetadataCleaner-*-macOS.dmg \
-            MetadataCleaner-*-Windows.exe
+            MetadataCleaner-*-Windows.zip
         env:
           GH_TOKEN: ${{ github.token }}
