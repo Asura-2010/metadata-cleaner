@@ -1608,18 +1608,24 @@ def main():
     if len(sys.argv) > 1:
         cli_mode(sys.argv[1:])
     else:
-        # On macOS, TkinterDnD creates an extra "tk" window that's hard to suppress
-        # Use standard tk.Tk() but keep DnD disabled on macOS for now
-        if sys.platform == "darwin":
-            HAS_DND = False
-
+        root = None
         if HAS_DND:
-            try:
-                root = TkinterDnD.Tk()
-            except RuntimeError:
-                HAS_DND = False
+            if sys.platform == "darwin":
+                # On macOS, use standard tk.Tk() then manually load tkdnd
+                # This avoids the extra "tk" window that TkinterDnD.Tk() creates
                 root = tk.Tk()
-        else:
+                try:
+                    root.tk.eval('package require tkdnd')
+                except tk.TclError:
+                    HAS_DND = False
+            else:
+                try:
+                    root = TkinterDnD.Tk()
+                except RuntimeError:
+                    HAS_DND = False
+                    root = tk.Tk()
+
+        if root is None:
             root = tk.Tk()
 
         MetadataCleanerApp(root)
