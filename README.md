@@ -169,15 +169,9 @@ python3 metadata_cleaner.py *.docx *.xlsx *.pptx *.wps *.pdf
 | **二进制 Padding** | PDF /Alt 文本使用等宽零字符替换，保持文件字节偏移不变 |
 | **分类报错** | 权限不足、格式不支持等均有中文提示 |
 
-## 依赖
+## 技术说明
 
-```
-pypdf>=5.0.0
-PyPDF2>=3.0.0
-Pillow>=10.0.0
-pillow-heif>=1.0.0
-tkinterdnd2>=0.4.0
-```
+本工具打包后为单文件可执行程序（Windows `.exe` / macOS `.app`），**内置 Python 解释器和所有依赖**，用户无需安装任何额外软件，直接运行即可。
 
 ## 常见问题
 
@@ -204,12 +198,6 @@ tkinterdnd2>=0.4.0
 <details>
 <summary><b>旧格式 .doc / .xls / .ppt 能处理吗？</b></summary>
 先用 Office 打开，「文件 → 另存为」 .docx / .xlsx / .pptx，再处理。
-</details>
-
-<details>
-<summary><b>pip 安装太慢？</b></summary>
-手动切换国内镜像：
-<pre>pip install -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt</pre>
 </details>
 
 <details>
