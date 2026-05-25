@@ -1615,7 +1615,14 @@ def main():
                 # This avoids the extra "tk" window that TkinterDnD.Tk() creates
                 root = tk.Tk()
                 try:
-                    root.tk.eval('package require tkdnd')
+                    import tkinterdnd2
+                    from sys import platform
+                    # Detect macOS arch for correct tkdnd path
+                    import platform as plat
+                    arch = 'osx-arm64' if plat.machine() == 'arm64' else 'osx-x64'
+                    tkdnd_path = os.path.join(os.path.dirname(tkinterdnd2.__file__), 'tkdnd', arch)
+                    root.tk.call('lappend', 'auto_path', tkdnd_path)
+                    root.tk.call('package', 'require', 'tkdnd')
                 except tk.TclError:
                     HAS_DND = False
             else:
