@@ -122,23 +122,9 @@ PDF 中的超链接注释（/URI），包含文档中嵌入的所有网址。
 2. **审阅 → 删除文档中的所有批注**
 3. 保存后重新拖入工具处理
 
-## 下载安装
-
-每次代码更新后，[GitHub Actions](https://github.com/Asura-2010/metadata-cleaner/actions) 自动构建最新版本。
-
-| 平台 | 下载 | 说明 |
-|------|------|------|
-| **macOS** | 在 [Actions](https://github.com/Asura-2010/metadata-cleaner/actions) 中最新一次构建 → Artifacts → `macOS-dmg` | 双击 .dmg 打开，拖入 Applications，开箱即用 |
-| **Windows** | 在 [Actions](https://github.com/Asura-2010/metadata-cleaner/actions) 中最新一次构建 → Artifacts → `Windows-exe` | 单个 .exe 文件，直接双击运行，无需安装 |
-
-> 以上安装包已内置 Python 和所有依赖，无需单独安装任何东西。
-
 ## 使用方法
 
 ### 图形界面
-
-- **macOS**：双击 `MetadataCleaner.app`
-- **Windows**：双击 `MetadataCleaner.exe`
 
 1. 点击 **「添加文件」**，选择要处理的文件（按住 `Ctrl` 或 `Cmd` 可多选，**支持批量**）
 2. （可选）选中文件 → **右键「查看元数据」**，核对文件中的隐藏信息
@@ -155,26 +141,6 @@ PDF 中的超链接注释（/URI），包含文档中嵌入的所有网址。
 ```bash
 python3 metadata_cleaner.py *.docx *.xlsx *.pptx *.wps *.pdf
 ```
-
-## 从源码运行
-
-```bash
-# 创建虚拟环境并安装依赖
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# 启动
-python3 metadata_cleaner.py
-```
-
-## 本地构建
-
-```bash
-bash build.sh          # macOS / Linux
-```
-
-> Windows 或需要跨平台构建直接用 [GitHub Actions](https://github.com/Asura-2010/metadata-cleaner/actions)，`git push` 自动出包。
 
 ## 支持的文件格式
 
