@@ -152,13 +152,34 @@ jobs:
         with:
           name: Windows-exe
 
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Get commits since last tag or initial commit
+          PREV_TAG=$(git tag --sort=-v:refname | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            COMMITS=$(git log --oneline -20)
+          else
+            COMMITS=$(git log --oneline "${PREV_TAG}..HEAD")
+          fi
+          # Format as markdown changelog
+          NOTES="## 变更内容\n\n"
+          while IFS= read -r line; do
+            NOTES+="- ${line}\n"
+          done <<< "$COMMITS"
+          NOTES+="\n---\n\n自动构建发布。"
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create Release
         if: steps.check.outputs.exists == 'false'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
-            --notes "自动构建。macOS 下载 .dmg，Windows 下载 .zip。" \
+            --notes "${{ steps.release-notes.outputs.notes }}" \
             MetadataCleaner-*-macOS.dmg \
             MetadataCleaner-*-Windows.zip
         env:
