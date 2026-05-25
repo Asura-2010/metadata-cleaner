@@ -1188,8 +1188,9 @@ class MetadataCleanerApp:
             self.listbox.drop_target_register(DND_FILES)
             self.listbox.dnd_bind("<<Drop>>", self._on_drop)
             # Also register the whole window for drops
-            self.root.drop_target_register(DND_FILES)
-            self.root.dnd_bind("<<Drop>>", self._on_drop)
+            if hasattr(self.root, 'drop_target_register'):
+                self.root.drop_target_register(DND_FILES)
+                self.root.dnd_bind("<<Drop>>", self._on_drop)
 
         # Buttons
         btn_frame = ttk.Frame(main)
