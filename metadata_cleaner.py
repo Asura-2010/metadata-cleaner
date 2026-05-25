@@ -4,7 +4,7 @@ Metadata Cleaner - Cross-platform tool to remove metadata from Office files & PD
 Works on Windows, macOS, and Linux.
 """
 
-__version__ = "1.2.3"
+__version__ = "1.2.4"
 
 import os
 import re
