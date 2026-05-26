@@ -4,7 +4,7 @@ Metadata Cleaner - Cross-platform tool to remove metadata from Office files & PD
 Works on Windows, macOS, and Linux.
 """
 
-__version__ = "1.2.4"
+__version__ = "1.2.5"
 
 import os
 import re
@@ -103,8 +103,12 @@ def _strip_image_metadata(data: bytes) -> bytes:
                 img.save(out, format="JPEG", quality=95)
         elif fmt == "PNG":
             img.save(out, format="PNG")
-        elif fmt == "GIF":
-            img.save(out, format="GIF")
+        elif fmt == "TIFF":
+            # Re-save without extra metadata. Do NOT rebuild from pixel data —
+            # that changes the TIFF structure and PowerPoint flags the file as
+            # corrupted. Structural IFD tags (resolution, strip layout, etc.)
+            # are necessary for integrity and are filtered from the metadata viewer.
+            img.save(out, format="TIFF")
         elif fmt == "HEIF":
             # Pillow's generic save preserves EXIF for HEIF; use pillow-heif
             # directly after stripping metadata from the Pillow image.
@@ -183,10 +187,15 @@ def _clean_core_xml(xml_bytes: bytes) -> bytes:
             data,
         )
 
-    # Set revision to 1 (must be a valid integer string)
+    # Remove revision element entirely (optional field, safe to delete)
     data = re.sub(
-        rb"(<cp:revision(?:\s[^>]*)?>)[^<]*(</cp:revision>)",
-        rb"\g<1>1\g<2>",
+        rb"<cp:revision(?:\s[^>]*)?>[^<]*</cp:revision>",
+        b"",
+        data,
+    )
+    data = re.sub(
+        rb"<cp:revision(?:\s[^>]*)?/>",
+        b"",
         data,
     )
 
@@ -198,6 +207,11 @@ def _clean_core_xml(xml_bytes: bytes) -> bytes:
 _APP_FIELDS_TO_CLEAR = [
     "Company",
     "Manager",
+]
+# String fields removed entirely — empty values crash PowerPoint
+_APP_FIELDS_TO_REMOVE = [
+    "Application",
+    "AppVersion",
 ]
 # Integer fields: set to "0" (empty string is NOT valid for xsd:int)
 _APP_FIELDS_TO_ZERO = [
@@ -240,17 +254,36 @@ def _clean_app_xml(xml_bytes: bytes) -> bytes:
             data,
         )
 
+    # Fields that must be removed entirely — empty string crashes Office
+    for local in _APP_FIELDS_TO_REMOVE:
+        data = re.sub(
+            rb"<" + local.encode() + rb"(?:\s[^>]*)?>"
+            rb"[^<]*"
+            rb"</" + local.encode() + rb">",
+            b"",
+            data,
+        )
+        data = re.sub(
+            rb"<" + local.encode() + rb"(?:\s[^>]*)?/>",
+            b"",
+            data,
+        )
+
+    # Remove HeadingPairs and TitlesOfParts — these leak slide titles and
+    # document structure. Office rebuilds them on next save.
+    data = re.sub(rb"<HeadingPairs>.*?</HeadingPairs>\s*", b"", data, flags=re.DOTALL)
+    data = re.sub(rb"<TitlesOfParts>.*?</TitlesOfParts>\s*", b"", data, flags=re.DOTALL)
+
     return data
 
 
 def _clean_document_xml(xml_bytes: bytes) -> bytes:
-    """Clear descr attributes in document.xml (wp:docPr and pic:cNvPr elements).
-    Word stores the source file path of pasted/dragged images here — this is
-    how Acrobat shows original file paths when hovering over images in a PDF
-    converted from Word."""
-    # Remove descr="..." attributes only inside wp:docPr and pic:cNvPr tags
-    # to avoid accidentally matching literal text in document body
-    data = re.sub(rb'(<(?:wp:docPr|pic:cNvPr)[^>]*?)\s+descr="[^"]*"', rb"\1", xml_bytes)
+    """Clear descr attributes in document XML (cNvPr / docPr elements).
+    Office stores source file paths of pasted/dragged images in descr attrs.
+    Word uses wp:docPr / wp:cNvPr, PowerPoint uses p:cNvPr, Excel uses xdr:cNvPr."""
+    data = re.sub(
+        rb'(<(?:wp:docPr|wp:cNvPr|pic:cNvPr|p:cNvPr|xdr:cNvPr)[^>]*?)\s+descr="[^"]*"',
+        rb"\1", xml_bytes)
     return data
 
 
@@ -295,6 +328,18 @@ def clean_office_file(filepath: str) -> tuple:
                                                 ".bmp", ".tiff", ".tif", ".webp",
                                                 ".heic")):
                     cleaned = _strip_image_metadata(zin.read(name))
+                    zout.writestr(item, cleaned)
+                # Strip metadata from document thumbnail (preview of first slide)
+                elif name.startswith("docProps/thumbnail."):
+                    cleaned = _strip_image_metadata(zin.read(name))
+                    zout.writestr(item, cleaned)
+                # Clean WPS/Kingsoft custom tags that carry device identifiers
+                elif "/tags/" in name and name.endswith(".xml"):
+                    cleaned = re.sub(
+                        rb'<p:tag\s[^>]*?\bname="(?:KSO_|COMMONDATA)[^"]*"[^>]*/>',
+                        b"",
+                        zin.read(name),
+                    )
                     zout.writestr(item, cleaned)
                 # Stream everything else as-is (no memory accumulation)
                 else:
@@ -670,6 +715,10 @@ def _read_office_metadata(filepath: str) -> dict:
                 ):
                     props[m.group(1)] = m.group(2)
                 for m in re.finditer(
+                    r'name="([^"]+)".*?<vt:lpwstr>([^<]*)</vt:lpwstr>', raw
+                ):
+                    props[m.group(1)] = m.group(2)
+                for m in re.finditer(
                     r'name="([^"]+)".*?<vt:i4>([^<]*)</vt:i4>', raw
                 ):
                     props[m.group(1)] = m.group(2)
@@ -750,8 +799,17 @@ def _read_image_metadata(data: bytes) -> dict[str, str]:
         if img.format in ("PNG", "JPEG", "TIFF", "HEIF"):
             exif = img.getexif()
             if exif:
+                # TIFF/EXIF tags that describe image encoding, not user metadata
+                _STRUCTURAL_TAGS = {
+                    254, 256, 257, 258, 259, 262, 266, 273, 274,
+                    277, 278, 279, 282, 283, 284, 296, 317, 320,
+                    322, 323, 324, 325, 330, 338, 339, 513, 514,
+                    530, 531, 532, 33421, 33422,
+                }
                 for tag_id, val in exif.items():
                     from PIL.ExifTags import TAGS
+                    if tag_id in _STRUCTURAL_TAGS:
+                        continue
                     tag_name = TAGS.get(tag_id, f"Tag{tag_id}")
                     if val and tag_name not in ("ExifOffset", "MakerNote"):
                         info[tag_name] = str(val).strip()
