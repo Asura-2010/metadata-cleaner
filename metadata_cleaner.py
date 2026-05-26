@@ -4,7 +4,7 @@ Metadata Cleaner - Cross-platform tool to remove metadata from Office files & PD
 Works on Windows, macOS, and Linux.
 """
 
-__version__ = "1.2.5"
+__version__ = "1.2.6"
 
 import os
 import re
@@ -1669,27 +1669,11 @@ def main():
     else:
         root = None
         if HAS_DND:
-            if sys.platform == "darwin":
-                # On macOS, use standard tk.Tk() then manually load tkdnd
-                # This avoids the extra "tk" window that TkinterDnD.Tk() creates
+            try:
+                root = TkinterDnD.Tk()
+            except RuntimeError:
+                HAS_DND = False
                 root = tk.Tk()
-                try:
-                    import tkinterdnd2
-                    from sys import platform
-                    # Detect macOS arch for correct tkdnd path
-                    import platform as plat
-                    arch = 'osx-arm64' if plat.machine() == 'arm64' else 'osx-x64'
-                    tkdnd_path = os.path.join(os.path.dirname(tkinterdnd2.__file__), 'tkdnd', arch)
-                    root.tk.call('lappend', 'auto_path', tkdnd_path)
-                    root.tk.call('package', 'require', 'tkdnd')
-                except tk.TclError:
-                    HAS_DND = False
-            else:
-                try:
-                    root = TkinterDnD.Tk()
-                except RuntimeError:
-                    HAS_DND = False
-                    root = tk.Tk()
 
         if root is None:
             root = tk.Tk()

@@ -48,6 +48,7 @@ build_macos() {
         --name "${APP_NAME}" \
         --osx-bundle-identifier "com.asura.metadata-cleaner" \
         --icon icon.icns \
+        --hidden-import tkinterdnd2 \
         --clean \
         metadata_cleaner.py
 
