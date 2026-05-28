@@ -4,11 +4,13 @@ Metadata Cleaner - Cross-platform tool to remove metadata from Office files & PD
 Works on Windows, macOS, and Linux.
 """
 
-__version__ = "1.2.6"
+__version__ = "1.3.0"
 
 import os
 import re
 import sys
+import time
+import random
 import shutil
 import tempfile
 import zipfile
@@ -16,6 +18,16 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 from threading import Thread
+
+from randomizer import (
+    generate_unique_identities,
+    randomize_times,
+    random_template,
+    random_total_time,
+    random_rsid_mapping,
+    format_metadata_report,
+    ReportPopup,
+)
 
 # Optional drag-and-drop support
 try:
@@ -136,68 +148,145 @@ def _strip_image_metadata(data: bytes) -> bytes:
 # ============================================================
 
 
-def _clean_core_xml(xml_bytes: bytes) -> bytes:
-    """Clear/remove metadata fields in core.xml using regex.
+def _xml_escape(val: bytes) -> bytes:
+    """Escape &, <, > in bytes for safe XML text content insertion."""
+    val = val.replace(b"&", b"&amp;")
+    val = val.replace(b"<", b"&lt;")
+    val = val.replace(b">", b"&gt;")
+    return val
 
-    String-typed fields are cleared (text emptied, element kept).
-    Date-typed fields are *removed entirely* — an empty string violates
-    the W3CDTF / dateTime schema constraint and Word rejects the file.
+
+def _maybe_empty(val: bytes, probability: float = 0.15) -> bytes:
+    """Randomly return empty instead of the value, for natural-looking metadata.
+
+    Real files don't always have every field populated — ~15% of fields
+    are blank in practice.  This avoids the "everything filled" pattern
+    that looks obviously machine-generated.
+    """
+    return b"" if random.random() < probability else val
+
+
+def _clean_core_xml(xml_bytes: bytes, randomize: bool = False,
+                    random_state: dict | None = None) -> bytes:
+    """Clear or randomize metadata fields in core.xml using regex.
+
+    When randomize=False (default): string fields cleared, date fields removed.
+    When randomize=True: creator / lastModifiedBy filled with random name,
+    dates filled with random timestamps, revision set to random number,
+    other string fields cleared.
     """
     data = xml_bytes
 
-    # String-typed fields: clear text, keep element  (prefix, localname)
-    _STRING_FIELDS = [
-        ("dc", "creator"),
-        ("dc", "description"),
-        ("dc", "subject"),
-        ("dc", "title"),
-        ("cp", "lastModifiedBy"),
-        ("cp", "version"),
-        ("cp", "keywords"),
-        ("cp", "category"),
-    ]
-    for prefix, local in _STRING_FIELDS:
+    if randomize and random_state:
+        author = _xml_escape(random_state["author_name"].encode())
+        created, last_printed, modified = random_state["times"]
+        revision = random_state["revision"].encode()
+
+        # Helper: replacement function that inserts value between groups
+        def _ins(val: bytes):
+            return lambda m: m.group(1) + val + m.group(2)
+
+        # Creator / lastModifiedBy → random name (sometimes left empty)
+        for prefix, local in [("dc", "creator"), ("cp", "lastModifiedBy")]:
+            tag_pat = prefix.encode() + b":" + local.encode()
+            name_or_empty = _maybe_empty(author)
+            data = re.sub(
+                rb"(<" + tag_pat + rb"(?:\s[^>]*)?>)[^<]*(</" + tag_pat + rb">)",
+                _ins(name_or_empty), data,
+            )
+
+        # Date fields → random timestamps (rarely left empty — 8%)
+        for (prefix, local), val in [
+            (("dcterms", "created"), created),
+            (("dcterms", "modified"), modified),
+            (("cp", "lastPrinted"), last_printed),
+        ]:
+            tag_pat = prefix.encode() + b":" + local.encode()
+            val_bytes = _maybe_empty(val.encode(), 0.08)
+            data = re.sub(
+                rb"(<" + tag_pat + rb"(?:\s[^>]*)?>)[^<]*(</" + tag_pat + rb">)",
+                _ins(val_bytes), data,
+            )
+            data = re.sub(
+                rb"<" + tag_pat + rb"(?:\s[^>]*)?/>",
+                b"<" + tag_pat + b">" + val_bytes + b"</" + tag_pat + b">",
+                data,
+            )
+
+        # Revision → random number (sometimes 0 — 10%)
+        rev_or_empty = _maybe_empty(revision, 0.10)
         data = re.sub(
-            rb"(<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?>)"
-            rb"[^<]*"
-            rb"(</" + prefix.encode() + rb":" + local.encode() + rb">)",
-            rb"\1\2",
+            rb"<cp:revision(?:\s[^>]*)?>[^<]*</cp:revision>",
+            b"<cp:revision>" + rev_or_empty + b"</cp:revision>",
+            data,
+        )
+        data = re.sub(
+            rb"<cp:revision(?:\s[^>]*)?/>",
+            b"<cp:revision>" + rev_or_empty + b"</cp:revision>",
             data,
         )
 
-    # Date-typed fields: remove the entire element including attributes
-    # (dcterms:W3CDTF and xsd:dateTime require valid dates — empty is invalid)
-    _DATE_FIELDS = [
-        ("dcterms", "created"),
-        ("dcterms", "modified"),
-        ("cp", "lastPrinted"),
-    ]
-    for prefix, local in _DATE_FIELDS:
-        # Match both <tag>text</tag> and self-closing <tag ... />
+        # Remaining string fields: clear text
+        for prefix, local in [
+            ("dc", "description"), ("dc", "subject"), ("dc", "title"),
+            ("cp", "version"), ("cp", "keywords"), ("cp", "category"),
+        ]:
+            tag_pat = prefix.encode() + b":" + local.encode()
+            data = re.sub(
+                rb"(<" + tag_pat + rb"(?:\s[^>]*)?>)[^<]*(</" + tag_pat + rb">)",
+                rb"\1\2",
+                data,
+            )
+    else:
+        # Original behaviour: clear all string fields, remove date fields
+        _STRING_FIELDS = [
+            ("dc", "creator"),
+            ("dc", "description"),
+            ("dc", "subject"),
+            ("dc", "title"),
+            ("cp", "lastModifiedBy"),
+            ("cp", "version"),
+            ("cp", "keywords"),
+            ("cp", "category"),
+        ]
+        for prefix, local in _STRING_FIELDS:
+            data = re.sub(
+                rb"(<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?>)"
+                rb"[^<]*"
+                rb"(</" + prefix.encode() + rb":" + local.encode() + rb">)",
+                rb"\1\2",
+                data,
+            )
+
+        _DATE_FIELDS = [
+            ("dcterms", "created"),
+            ("dcterms", "modified"),
+            ("cp", "lastPrinted"),
+        ]
+        for prefix, local in _DATE_FIELDS:
+            data = re.sub(
+                rb"<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?>"
+                rb"[^<]*"
+                rb"</" + prefix.encode() + rb":" + local.encode() + rb">",
+                b"",
+                data,
+            )
+            data = re.sub(
+                rb"<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?/>",
+                b"",
+                data,
+            )
+
         data = re.sub(
-            rb"<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?>"
-            rb"[^<]*"
-            rb"</" + prefix.encode() + rb":" + local.encode() + rb">",
+            rb"<cp:revision(?:\s[^>]*)?>[^<]*</cp:revision>",
             b"",
             data,
         )
         data = re.sub(
-            rb"<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?/>",
+            rb"<cp:revision(?:\s[^>]*)?/>",
             b"",
             data,
         )
-
-    # Remove revision element entirely (optional field, safe to delete)
-    data = re.sub(
-        rb"<cp:revision(?:\s[^>]*)?>[^<]*</cp:revision>",
-        b"",
-        data,
-    )
-    data = re.sub(
-        rb"<cp:revision(?:\s[^>]*)?/>",
-        b"",
-        data,
-    )
 
     return data
 
@@ -207,6 +296,7 @@ def _clean_core_xml(xml_bytes: bytes) -> bytes:
 _APP_FIELDS_TO_CLEAR = [
     "Company",
     "Manager",
+    "Template",
 ]
 # String fields removed entirely — empty values crash PowerPoint
 _APP_FIELDS_TO_REMOVE = [
@@ -227,34 +317,64 @@ _EMPTY_CUSTOM_XML = (
 )
 
 
-def _clean_app_xml(xml_bytes: bytes) -> bytes:
-    """Clear company/manager metadata in app.xml using regex to preserve the
-    original XML structure byte-for-byte.
+def _clean_app_xml(xml_bytes: bytes, randomize: bool = False,
+                   random_state: dict | None = None) -> bytes:
+    """Clear or randomize extended-property metadata in app.xml.
 
-    String fields are cleared (empty text).  Integer fields (TotalTime)
-    are set to "0" — an empty string violates the xsd:int constraint.
+    When randomize=False: Company / Manager / Template cleared, TotalTime→0,
+    Application / AppVersion removed, HeadingPairs / TitlesOfParts removed.
+    When randomize=True: Company / Manager filled with random company name,
+    Template filled with random path, TotalTime set to random value.
     """
     data = xml_bytes
 
-    for local in _APP_FIELDS_TO_CLEAR:
+    if randomize and random_state:
+        def _ins(val: bytes):
+            return lambda m: m.group(1) + val + m.group(2)
+
+        # Company and Manager → random company name (sometimes left empty — 15%)
+        company_bytes = _maybe_empty(_xml_escape(random_state["company_name"].encode()))
+        for local in ["Company", "Manager"]:
+            data = re.sub(
+                rb"(<" + local.encode() + rb"(?:\s[^>]*)?>)[^<]*(</" + local.encode() + rb">)",
+                _ins(company_bytes), data,
+            )
+
+        # Template → random template path (sometimes left empty — 15%)
+        tmpl_bytes = _maybe_empty(_xml_escape(random_state["template"].encode()))
         data = re.sub(
-            rb"(<" + local.encode() + rb"(?:\s[^>]*)?>)"
-            rb"[^<]*"
-            rb"(</" + local.encode() + rb">)",
-            rb"\1\2",
-            data,
+            rb"(<Template(?:\s[^>]*)?>)[^<]*(</Template>)",
+            _ins(tmpl_bytes), data,
         )
 
-    for local in _APP_FIELDS_TO_ZERO:
+        # TotalTime → random value (sometimes 0 — 15%)
+        tt_bytes = _maybe_empty(random_state["total_time"].encode())
         data = re.sub(
-            rb"(<" + local.encode() + rb"(?:\s[^>]*)?>)"
-            rb"[^<]*"
-            rb"(</" + local.encode() + rb">)",
-            rb"\g<1>0\g<2>",
-            data,
+            rb"(<TotalTime(?:\s[^>]*)?>)[^<]*(</TotalTime>)",
+            _ins(tt_bytes), data,
         )
+    else:
+        # Clear string fields (Company, Manager, Template)
+        for local in _APP_FIELDS_TO_CLEAR:
+            data = re.sub(
+                rb"(<" + local.encode() + rb"(?:\s[^>]*)?>)"
+                rb"[^<]*"
+                rb"(</" + local.encode() + rb">)",
+                rb"\1\2",
+                data,
+            )
 
-    # Fields that must be removed entirely — empty string crashes Office
+        # Zero integer fields (TotalTime)
+        for local in _APP_FIELDS_TO_ZERO:
+            data = re.sub(
+                rb"(<" + local.encode() + rb"(?:\s[^>]*)?>)"
+                rb"[^<]*"
+                rb"(</" + local.encode() + rb">)",
+                rb"\g<1>0\g<2>",
+                data,
+            )
+
+    # Fields removed in both modes (rebuilt by Office on next save)
     for local in _APP_FIELDS_TO_REMOVE:
         data = re.sub(
             rb"<" + local.encode() + rb"(?:\s[^>]*)?>"
@@ -277,23 +397,63 @@ def _clean_app_xml(xml_bytes: bytes) -> bytes:
     return data
 
 
-def _clean_document_xml(xml_bytes: bytes) -> bytes:
+def _clean_document_xml(xml_bytes: bytes, randomize: bool = False) -> bytes:
     """Clear descr attributes in document XML (cNvPr / docPr elements).
     Office stores source file paths of pasted/dragged images in descr attrs.
-    Word uses wp:docPr / wp:cNvPr, PowerPoint uses p:cNvPr, Excel uses xdr:cNvPr."""
+    Word uses wp:docPr / wp:cNvPr, PowerPoint uses p:cNvPr, Excel uses xdr:cNvPr.
+
+    When randomize=True, also replaces RSID values with random hex strings.
+    """
+    data = xml_bytes
+
+    if randomize:
+        # Collect all unique RSID values and build a per-document mapping
+        rsid_pattern = rb'w:rsid\w+="([0-9A-Fa-f]+)"'
+        unique_rsids = set(re.findall(rsid_pattern, data))
+        if unique_rsids:
+            mapping = random_rsid_mapping(unique_rsids)
+
+            def _replace_rsid(m):
+                return m.group(1) + mapping.get(m.group(2), m.group(2)) + m.group(3)
+
+            data = re.sub(
+                rb'(w:rsid\w+=")([0-9A-Fa-f]+)(")',
+                _replace_rsid,
+                data,
+            )
+
+    # Clear image source paths from descr attrs (both modes)
     data = re.sub(
         rb'(<(?:wp:docPr|wp:cNvPr|pic:cNvPr|p:cNvPr|xdr:cNvPr)[^>]*?)\s+descr="[^"]*"',
-        rb"\1", xml_bytes)
+        rb"\1", data)
     return data
 
 
-def clean_office_file(filepath: str) -> tuple:
+def clean_office_file(filepath: str, randomize: bool = False,
+                      identity: dict | None = None) -> tuple:
     """
     Remove metadata from a .docx / .xlsx / .pptx / .wps / .et / .dps file.
     Streams ZIP entries to avoid loading large files into memory.
     Uses atomic temp-file replacement to prevent data loss on interruption.
     Returns (success: bool, error_message: str|None).
+
+    When randomize=True, metadata is replaced with realistic random values
+    instead of being cleared.  identity must be a dict with author_name
+    and company_name keys (from generate_unique_identities).
     """
+    # Build random_state once per file so sub-functions share the same values
+    if randomize and identity:
+        random_state = {
+            "author_name": identity["author_name"],
+            "company_name": identity["company_name"],
+            "times": randomize_times(os.path.getmtime(filepath)),
+            "template": random_template(identity["author_name"], os.path.splitext(filepath)[1].lower()),
+            "total_time": random_total_time(),
+            "revision": str(random.randint(1, 50)),
+        }
+    else:
+        random_state = None
+
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(filepath),
                                      prefix=".mdc-", suffix=".tmp")
     os.close(fd)
@@ -306,22 +466,20 @@ def clean_office_file(filepath: str) -> tuple:
 
                 # Clean core.xml metadata
                 if name == "docProps/core.xml":
-                    cleaned = _clean_core_xml(zin.read(name))
+                    cleaned = _clean_core_xml(zin.read(name), randomize, random_state)
                     zout.writestr(item, cleaned)
-                # Clean app.xml metadata (company, manager)
+                # Clean app.xml metadata (company, manager, template)
                 elif name == "docProps/app.xml":
-                    cleaned = _clean_app_xml(zin.read(name))
+                    cleaned = _clean_app_xml(zin.read(name), randomize, random_state)
                     zout.writestr(item, cleaned)
                 # Clean custom.xml — replace with empty skeleton
                 elif name == "docProps/custom.xml":
                     zout.writestr(item, _EMPTY_CUSTOM_XML)
-                # Clean image source paths from document/slide/sheet XML
-                # Word stores paste-source paths in descr attributes of
-                # wp:docPr / pic:cNvPr elements
+                # Clean image source paths + optionally RSIDs
                 elif (name == "word/document.xml"
                       or name.startswith("ppt/slides/slide")
                       or name.startswith("xl/worksheets/sheet")):
-                    cleaned = _clean_document_xml(zin.read(name))
+                    cleaned = _clean_document_xml(zin.read(name), randomize)
                     zout.writestr(item, cleaned)
                 # Strip EXIF/metadata from embedded images (screenshots, photos)
                 elif name.lower().endswith((".png", ".jpg", ".jpeg", ".gif",
@@ -439,7 +597,8 @@ def _strip_pdf_raw_bytes(path: str) -> None:
         f.write(content)
 
 
-def clean_pdf_file(filepath: str) -> tuple:
+def clean_pdf_file(filepath: str, randomize: bool = False,
+                   identity: dict | None = None) -> tuple:
     """
     Remove metadata from a PDF file — info dict, XMP (doc + image level),
     /Alt image source paths, /URI links, and Producer.
@@ -509,7 +668,8 @@ def clean_pdf_file(filepath: str) -> tuple:
 # ============================================================
 
 
-def clean_image_file(filepath: str) -> tuple:
+def clean_image_file(filepath: str, randomize: bool = False,
+                     identity: dict | None = None) -> tuple:
     """
     Remove metadata from a standalone image file (PNG / JPEG / GIF / etc).
     Uses atomic temp-file replacement. Returns (success, error_message).
@@ -545,7 +705,8 @@ def clean_image_file(filepath: str) -> tuple:
         return False, str(exc)
 
 
-def clean_file(filepath: str) -> tuple:
+def clean_file(filepath: str, randomize: bool = False,
+               identity: dict | None = None) -> tuple:
     """Clean a single file. Returns (success, error_message)."""
     ext = Path(filepath).suffix.lower()
 
@@ -558,11 +719,11 @@ def clean_file(filepath: str) -> tuple:
         return False, f"不支持的文件类型: {ext}"
 
     if ext == ".pdf":
-        return clean_pdf_file(filepath)
+        return clean_pdf_file(filepath, randomize, identity)
     elif ext in IMAGE_EXTENSIONS:
-        return clean_image_file(filepath)
+        return clean_image_file(filepath, randomize, identity)
     else:
-        return clean_office_file(filepath)
+        return clean_office_file(filepath, randomize, identity)
 
 
 # ============================================================
@@ -1157,8 +1318,8 @@ class MetadataCleanerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(f"元数据清除工具 v{__version__}")
-        self.root.geometry("620x480")
-        self.root.minsize(500, 380)
+        self.root.geometry("700x580")
+        self.root.minsize(580, 500)
 
         # Set window icon (Windows taskbar and thumbnail)
         if sys.platform == "win32":
@@ -1191,8 +1352,15 @@ class MetadataCleanerApp:
         main = ttk.Frame(self.root, padding="12")
         main.pack(fill=tk.BOTH, expand=True)
 
-        # Header
-        ttk.Label(main, text="元数据清除工具", font=("", 16, "bold")).pack(pady=(0, 2))
+        # Header row: title on left, about button on right
+        header = ttk.Frame(main)
+        header.pack(fill=tk.X, pady=(0, 2))
+
+        ttk.Label(header, text="元数据清除工具", font=("", 16, "bold")).pack(side=tk.LEFT)
+
+        self.btn_about = ttk.Button(header, text="关于", command=self._show_about, width=6)
+        self.btn_about.pack(side=tk.RIGHT)
+
         ttk.Label(
             main,
             text="支持 Word / Excel / PPT (.docx/.xlsx/.pptx)  |  WPS (.wps/.et/.dps)  |  PDF  |  图片 (.jpg/.png/.gif/.bmp/.tiff/.webp/.heic)",
@@ -1250,10 +1418,23 @@ class MetadataCleanerApp:
                 self.root.drop_target_register(DND_FILES)
                 self.root.dnd_bind("<<Drop>>", self._on_drop)
 
-        # Buttons
+        # Randomize option — standalone row for visibility
+        rand_frame = ttk.LabelFrame(main, text="处理模式（可选）", padding="8")
+        rand_frame.pack(fill=tk.X, pady=(0, 8))
+
+        self.randomize_var = tk.BooleanVar(value=False)
+        self.chk_random = ttk.Checkbutton(
+            rand_frame,
+            text="随机化：替换元数据为随机仿真值（人名、公司名、时间戳等）。不勾选 = 清空元数据",
+            variable=self.randomize_var,
+        )
+        self.chk_random.pack(side=tk.LEFT)
+
+        # Action buttons
         btn_frame = ttk.Frame(main)
         btn_frame.pack(fill=tk.X, pady=(0, 10))
 
+        # Left: management buttons
         self.btn_add = ttk.Button(btn_frame, text="添加文件", command=self._add_files)
         self.btn_add.pack(side=tk.LEFT, padx=(0, 6))
 
@@ -1266,13 +1447,22 @@ class MetadataCleanerApp:
         self.btn_view = ttk.Button(btn_frame, text="查看元数据", command=self._view_metadata)
         self.btn_view.pack(side=tk.LEFT, padx=(0, 6))
 
-        self.btn_about = ttk.Button(btn_frame, text="关于", command=self._show_about)
-        self.btn_about.pack(side=tk.LEFT, padx=(0, 6))
-
-        self.btn_clean = ttk.Button(
-            btn_frame, text="清除元数据", command=self._start_cleaning
+        # Right: prominent red clean button
+        # Use Label instead of Button for cross-platform bg/fg support (macOS Button ignores colors)
+        self.btn_clean = tk.Label(
+            btn_frame,
+            text="  清除元数据  ",
+            bg="#e74c3c", fg="white",
+            font=("", 13, "bold"),
+            padx=20, pady=8,
+            relief=tk.RAISED,
+            borderwidth=2,
+            cursor="hand2",
         )
         self.btn_clean.pack(side=tk.RIGHT)
+        self.btn_clean.bind("<Button-1>", lambda e: self._on_clean_click())
+        self.btn_clean.bind("<Enter>", lambda e: self.btn_clean.config(bg="#c0392b"))
+        self.btn_clean.bind("<Leave>", lambda e: self.btn_clean.config(bg="#e74c3c"))
 
         # Progress bar
         self.progress = ttk.Progressbar(main, mode="determinate")
@@ -1456,7 +1646,7 @@ class MetadataCleanerApp:
         """Show about dialog with program info and usage help."""
         dlg = tk.Toplevel(self.root)
         dlg.title("关于")
-        dlg.geometry("420x520")
+        dlg.geometry("440x600")
         dlg.transient(self.root)
         dlg.grab_set()
 
@@ -1492,12 +1682,21 @@ class MetadataCleanerApp:
         txt.insert(tk.END, "图片文件: .jpg / .png / .gif / .bmp / .tiff / .webp / .heic\n\n", "body")
 
         # Cleanable metadata
-        txt.insert(tk.END, "可清除的元数据包括\n", "heading")
+        txt.insert(tk.END, "可清除或随机化的元数据包括\n", "heading")
         txt.insert(tk.END, "作者、创建时间、修改时间、公司、版本等基本信息\n", "body")
         txt.insert(tk.END, "自定义属性（custom.xml）- 老版本 Office 或第三方插件残留\n", "body")
         txt.insert(tk.END, "第三方插件信息 - SharePoint、云盘同步工具等写入的路径和标识符\n", "body")
         txt.insert(tk.END, "嵌入图片元数据 - 从微信、QQ、截图工具粘贴的图片携带的隐藏信息\n", "body")
         txt.insert(tk.END, "图片源路径（document.xml descr 属性）- 最隐蔽的泄露点\n\n", "body")
+
+        # Randomization feature
+        txt.insert(tk.END, "随机化模式（v1.3 可选功能）\n", "heading")
+        txt.insert(tk.END, "默认不勾选 = 清空元数据（原有行为）。勾选后替换为随机仿真值：\n", "body")
+        txt.insert(tk.END, "• 人名 — 中文拼音/英文名/缩写等多风格混合\n", "body")
+        txt.insert(tk.END, "• 公司 — 中文城市+品牌+行业的真实风格名称\n", "body")
+        txt.insert(tk.END, "• 时间戳 — 符合逻辑顺序的随机日期时间\n", "body")
+        txt.insert(tk.END, "• 批次唯一保障 — 同一批多个文件的人名和公司名绝不重复\n", "body")
+        txt.insert(tk.END, "• 字段随机留空 — 模仿真实文件不完全填满的状态\n\n", "body")
 
         # Privacy highlight
         txt.insert(tk.END, "★★★ 全程本地处理，文件不会上传到网络 ★★★\n\n", "highlight")
@@ -1509,10 +1708,11 @@ class MetadataCleanerApp:
 
         # Usage
         txt.insert(tk.END, "使用方式\n", "heading")
-        txt.insert(tk.END, "1. 点击「添加文件」选择文件\n", "body")
+        txt.insert(tk.END, "1. 点击「添加文件」选择文件（可多选批量处理）\n", "body")
         txt.insert(tk.END, "2. 可拖拽文件到窗口中\n", "body")
-        txt.insert(tk.END, "3. 点击「查看元数据」预览\n", "body")
-        txt.insert(tk.END, "4. 点击「清除元数据」执行清理\n", "body")
+        txt.insert(tk.END, "3. 右键「查看元数据」预览文件中的隐藏信息\n", "body")
+        txt.insert(tk.END, "4. （可选）勾选「随机化」以替换为随机仿真值\n", "body")
+        txt.insert(tk.END, "5. 点击「清除元数据」执行清理，完成后弹窗展示报告\n", "body")
 
         txt.configure(state=tk.DISABLED)
 
@@ -1522,10 +1722,17 @@ class MetadataCleanerApp:
 
     # -- Cleaning flow ----------------------------------------------------
 
+    def _on_clean_click(self):
+        """Guard for label-based button: ignore clicks while cleaning."""
+        if not self._cleaning:
+            self._start_cleaning()
+
     def _start_cleaning(self):
         if not self.files:
             messagebox.showwarning("提示", "请先添加要处理的文件。")
             return
+
+        randomize = self.randomize_var.get()
 
         # Scan Office files for comments / tracked changes
         warnings_map: dict[str, list[str]] = {}
@@ -1548,34 +1755,53 @@ class MetadataCleanerApp:
             if not messagebox.askokcancel("警告：发现批注/修订记录", "\n".join(lines)):
                 return
 
+        mode_text = "随机化" if randomize else "清除"
         ok = messagebox.askokcancel(
-            "确认清除",
-            f"即将清除 {len(self.files)} 个文件的元数据。\n"
+            "确认操作",
+            f"即将{mode_text} {len(self.files)} 个文件的元数据。\n"
             "确认继续？",
         )
         if not ok:
             return
+
+        # Pre-generate unique identities for the batch (iron rule)
+        identities = generate_unique_identities(len(self.files)) if randomize else []
 
         self._cleaning = True
         self._toggle_buttons(tk.DISABLED)
         self.progress["value"] = 0
         self.status_var.set("正在处理...")
 
-        t = Thread(target=self._clean_all, daemon=True)
+        t = Thread(target=self._clean_all, args=(randomize, identities), daemon=True)
         t.start()
 
-    def _clean_all(self):
+    def _clean_all(self, randomize: bool, identities: list[dict]):
         total = len(self.files)
         results = []
+        metadata_map: dict[str, dict] = {}
+        t_start = time.time()
 
         for i, fp in enumerate(self.files):
             fname = os.path.basename(fp)
             self._ui_update(i, total, f"处理中: {fname}")
-            ok, err = clean_file(fp)
+
+            identity = identities[i] if randomize else None
+            ok, err = clean_file(fp, randomize, identity)
             results.append((fname, ok, err))
+
+            # Re-read metadata after cleaning for the report
+            if ok:
+                try:
+                    meta = read_metadata(fp)
+                    metadata_map[fname] = meta
+                except Exception:
+                    metadata_map[fname] = {}
+
             self._ui_update(i + 1, total, f"完成: {fname}")
 
-        self.root.after(0, lambda: self._show_results(results))
+        elapsed = time.time() - t_start
+        self.root.after(0, lambda: self._show_results(results, metadata_map,
+                                                       randomize, elapsed))
 
     def _ui_update(self, cur, total, msg):
         self.root.after(0, lambda: self._do_update(cur, total, msg))
@@ -1584,30 +1810,30 @@ class MetadataCleanerApp:
         self.progress["value"] = (cur / total) * 100 if total else 0
         self.status_var.set(msg)
 
-    def _show_results(self, results):
+    def _show_results(self, results, metadata_map, randomize, elapsed):
         self._cleaning = False
         self._toggle_buttons(tk.NORMAL)
         self.progress["value"] = 100
 
         ok_count = sum(1 for _, s, _ in results if s)
         bad_count = len(results) - ok_count
+        mode_label = "随机化" if randomize else "清除"
 
         if bad_count == 0:
-            self.status_var.set(f"全部成功 — 已清除 {ok_count} 个文件的元数据")
-            messagebox.showinfo("完成", f"成功清除 {ok_count} 个文件的元数据！")
-            self._clear_files()
+            self.status_var.set(f"全部成功 — 已{mode_label} {ok_count} 个文件的元数据")
         else:
             self.status_var.set(f"完成：{ok_count} 成功, {bad_count} 失败")
-            details = "\n".join(
-                f"  {name}: {err}" for name, ok, err in results if not ok
-            )
-            messagebox.showwarning(
-                "完成（有错误）",
-                f"成功: {ok_count}  失败: {bad_count}\n\n失败详情:\n{details}",
-            )
+
+        # Build and show the metadata report popup
+        report = format_metadata_report(results, metadata_map, randomize, elapsed)
+        ReportPopup(self.root, report)
+
+        # Clear file list on full success
+        if bad_count == 0:
+            self._clear_files()
 
     def _toggle_buttons(self, state):
-        for b in (self.btn_add, self.btn_remove, self.btn_clear, self.btn_view, self.btn_about, self.btn_clean):
+        for b in (self.btn_add, self.btn_remove, self.btn_clear, self.btn_view, self.btn_about, self.btn_clean, self.chk_random):
             b.config(state=state)
 
     def _on_close(self):
