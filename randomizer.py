@@ -196,17 +196,19 @@ def random_template(author_name: str | None = None, ext: str = ".docx") -> str:
                   "zhangsan", "lisi", "wangwu", "xiaoming"]
     _MAC_USERS = ["user", "Shared", "admin", "mac", "apple"]
 
-    # Standard Office templates by file type
-    _TMPL_WORD = ["Normal.dotm", "Normal.dotx"]
-    _TMPL_EXCEL = ["Book.xltx", "Sheet.xltx"]
-    _TMPL_PPT = ["Blank.potx"]
-
-    if ext in (".xlsx", ".et"):
-        _TMPL = _TMPL_EXCEL
-    elif ext in (".pptx", ".dps"):
-        _TMPL = _TMPL_PPT
-    else:
-        _TMPL = _TMPL_WORD
+    # Template names by file type — Office and WPS use different formats
+    if ext in (".wps",):
+        _TMPL = ["Normal.wpt"]
+    elif ext in (".et",):
+        _TMPL = ["Book.ett", "Sheet.ett"]
+    elif ext in (".dps",):
+        _TMPL = ["Blank.dpt"]
+    elif ext in (".xlsx",):
+        _TMPL = ["Book.xltx", "Sheet.xltx"]
+    elif ext in (".pptx",):
+        _TMPL = ["Blank.potx"]
+    else:  # .docx
+        _TMPL = ["Normal.dotm", "Normal.dotx"]
 
     # Derive a candidate username from author (lowercase first token)
     _author_user = None
@@ -220,46 +222,67 @@ def random_template(author_name: str | None = None, ext: str = ".docx") -> str:
             return _author_user
         return random.choice(users)
 
+    # Most users just use the default template — short name or empty.
+    # 85% short name, 10% empty, 5% full path.
+    roll = random.random()
+    if roll < 0.85:
+        return random.choice(_TMPL)
+    if roll < 0.95:
+        return ""
+
+    is_wps = ext in (".wps", ".et", ".dps")
+    t = random.choice(_TMPL)
+
     if random.random() < 0.88:  # 88% Windows
         u = _pick_user(_WIN_USERS)
-        t = random.choice(_TMPL)
-        variant = random.random()
-        if variant < 0.50:
-            # Per-user template folder — most common in practice
-            return f"C:\\Users\\{u}\\AppData\\Roaming\\Microsoft\\Templates\\{t}"
-        elif variant < 0.78:
-            # Custom Office Templates (Office 2013+)
-            return f"C:\\Users\\{u}\\Documents\\Custom Office Templates\\{t}"
-        elif variant < 0.88:
-            # System-wide Click-to-Run (Office 365/2019/2021) — less common
-            ver = random.choice(["16.0", "16.0", "16.0", "15.0"])
-            lcid = random.choice(["2052"] * 19 + ["1033"])
-            return (f"C:\\Program Files\\Microsoft Office\\root\\Office{ver}"
-                    f"\\Templates\\{lcid}\\{t}")
-        elif variant < 0.95:
-            # System-wide MSI (Office 2016/2013/2010) — even less common
-            arch = random.choice(["Program Files", "Program Files (x86)"])
-            ver = random.choice(["Office16", "Office16", "Office15", "Office14"])
-            lcid = random.choice(["2052"] * 19 + ["1033"])
-            return f"C:\\{arch}\\Microsoft Office\\{ver}\\Templates\\{lcid}\\{t}"
+        if is_wps:
+            # WPS template paths
+            variant = random.random()
+            if variant < 0.6:
+                return f"C:\\Users\\{u}\\AppData\\Roaming\\kingsoft\\office6\\templates\\{t}"
+            elif variant < 0.9:
+                return f"C:\\Users\\{u}\\Documents\\WPS Cloud Files\\templates\\{t}"
+            else:
+                return f"C:\\Program Files (x86)\\kingsoft\\office6\\templates\\{t}"
         else:
-            # Public / shared machine
-            return f"C:\\Users\\Public\\Documents\\Custom Office Templates\\{t}"
+            # Office template paths
+            variant = random.random()
+            if variant < 0.50:
+                return f"C:\\Users\\{u}\\AppData\\Roaming\\Microsoft\\Templates\\{t}"
+            elif variant < 0.78:
+                return f"C:\\Users\\{u}\\Documents\\Custom Office Templates\\{t}"
+            elif variant < 0.88:
+                ver = random.choice(["16.0", "16.0", "16.0", "15.0"])
+                lcid = random.choice(["2052"] * 19 + ["1033"])
+                return (f"C:\\Program Files\\Microsoft Office\\root\\Office{ver}"
+                        f"\\Templates\\{lcid}\\{t}")
+            elif variant < 0.95:
+                arch = random.choice(["Program Files", "Program Files (x86)"])
+                ver = random.choice(["Office16", "Office16", "Office15", "Office14"])
+                lcid = random.choice(["2052"] * 19 + ["1033"])
+                return f"C:\\{arch}\\Microsoft Office\\{ver}\\Templates\\{lcid}\\{t}"
+            else:
+                return f"C:\\Users\\Public\\Documents\\Custom Office Templates\\{t}"
 
     else:  # 12% macOS
         u = _pick_user(_MAC_USERS)
-        variant = random.random()
-        if variant < 0.5:
-            return (f"/Users/{u}/Library/Group Containers"
-                    f"/UBF8T346G9.Office/User Content"
-                    f"/Templates/Normal.dotm")
-        elif variant < 0.8:
-            return (f"/Users/{u}/Library/Application Support"
-                    f"/Microsoft/Office/User Templates"
-                    f"/Normal.dotm")
+        if is_wps:
+            return (f"/Users/{u}/Library/Containers"
+                    f"/com.kingsoft.wpsoffice.mac/Data"
+                    f"/Templates/{t}")
         else:
-            return (f"/Users/{u}/Documents/Microsoft User Data"
-                    f"/Office Templates/Normal.dotm")
+            variant = random.random()
+            if variant < 0.5:
+                return (f"/Users/{u}/Library/Group Containers"
+                        f"/UBF8T346G9.Office/User Content"
+                        f"/Templates/{t}")
+            elif variant < 0.8:
+                return (f"/Users/{u}/Library/Application Support"
+                        f"/Microsoft/Office/User Templates"
+                        f"/{t}")
+            else:
+                return (f"/Users/{u}/Documents/Microsoft User Data"
+                        f"/Office Templates/{t}")
 
 
 def random_total_time() -> str:

@@ -4,7 +4,7 @@ Metadata Cleaner - Cross-platform tool to remove metadata from Office files & PD
 Works on Windows, macOS, and Linux.
 """
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"
 
 import os
 import re
@@ -168,9 +168,11 @@ def _maybe_empty(val: bytes, probability: float = 0.15) -> bytes:
 
 def _clean_core_xml(xml_bytes: bytes, randomize: bool = False,
                     random_state: dict | None = None) -> bytes:
-    """Clear or randomize metadata fields in core.xml using regex.
+    """Remove identity-related metadata from core.xml.
 
-    When randomize=False (default): string fields cleared, date fields removed.
+    When randomize=False (default): only removes author/lastModifiedBy elements
+    entirely (no empty tags left behind). All other fields (dates, revision,
+    title, subject, etc.) are preserved as-is — they don't expose the operator.
     When randomize=True: creator / lastModifiedBy filled with random name,
     dates filled with random timestamps, revision set to random number,
     other string fields cleared.
@@ -238,93 +240,85 @@ def _clean_core_xml(xml_bytes: bytes, randomize: bool = False,
                 data,
             )
     else:
-        # Original behaviour: clear all string fields, remove date fields
-        _STRING_FIELDS = [
-            ("dc", "creator"),
-            ("dc", "description"),
-            ("dc", "subject"),
-            ("dc", "title"),
-            ("cp", "lastModifiedBy"),
-            ("cp", "version"),
-            ("cp", "keywords"),
-            ("cp", "category"),
-        ]
-        for prefix, local in _STRING_FIELDS:
+        # Only remove identity-leaking fields — delete the entire element,
+        # not just clear content (empty tags are a forensic signal).
+        # Preserve everything else (dates, revision, title, subject, etc.)
+        # since they don't expose who operated the tool.
+        for prefix, local in [("dc", "creator"), ("cp", "lastModifiedBy")]:
+            tag_pat = prefix.encode() + b":" + local.encode()
             data = re.sub(
-                rb"(<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?>)"
+                rb"<" + tag_pat + rb"(?:\s[^>]*)?>"
                 rb"[^<]*"
-                rb"(</" + prefix.encode() + rb":" + local.encode() + rb">)",
-                rb"\1\2",
-                data,
-            )
-
-        _DATE_FIELDS = [
-            ("dcterms", "created"),
-            ("dcterms", "modified"),
-            ("cp", "lastPrinted"),
-        ]
-        for prefix, local in _DATE_FIELDS:
-            data = re.sub(
-                rb"<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?>"
-                rb"[^<]*"
-                rb"</" + prefix.encode() + rb":" + local.encode() + rb">",
+                rb"</" + tag_pat + rb">",
                 b"",
                 data,
             )
             data = re.sub(
-                rb"<" + prefix.encode() + rb":" + local.encode() + rb"(?:\s[^>]*)?/>",
+                rb"<" + tag_pat + rb"(?:\s[^>]*)?/>",
                 b"",
                 data,
             )
-
-        data = re.sub(
-            rb"<cp:revision(?:\s[^>]*)?>[^<]*</cp:revision>",
-            b"",
-            data,
-        )
-        data = re.sub(
-            rb"<cp:revision(?:\s[^>]*)?/>",
-            b"",
-            data,
-        )
 
     return data
 
 
-# Fields in app.xml — the metadata we strip from extended properties
-# String fields: clear text (empty string is valid)
-_APP_FIELDS_TO_CLEAR = [
-    "Company",
-    "Manager",
-    "Template",
+# Application/AppVersion — used in randomize mode to set realistic Office values.
+# Office 2016/2019/365 = 16.0, Office 2013 = 15.0, Office 2010 = 14.0
+_OFFICE_VERSIONS = ["16.0", "16.0", "16.0",  # most common — just major version
+                    "16.0.18526.2016", "16.0.17928.2024",
+                    "16.0.17328.2012", "16.0.16924.2008",
+                    "15.0.5631.1000", "15.0.5589.1000",
+                    "14.0.7268.5000"]
+
+_CUSTOM_PROP_NAMES = [
+    "DocumentId", "Version", "Status", "Category", "Manager",
+    "CheckedBy", "Department", "ProjectCode", "RefNo", "BatchId",
+    "ClientId", "Priority", "Source", "Language", "Region",
 ]
-# String fields removed entirely — empty values crash PowerPoint
-_APP_FIELDS_TO_REMOVE = [
-    "Application",
-    "AppVersion",
+
+_CUSTOM_PROP_VALUES = [
+    "v1.0", "v2.1", "Draft", "Final", "Internal",
+    "A", "B", "C", "1", "2", "3",
+    str(time.localtime().tm_year), str(time.localtime().tm_year - 1),
+    "Q1", "Q2", "Q3", "Q4",
 ]
-# Integer fields: set to "0" (empty string is NOT valid for xsd:int)
-_APP_FIELDS_TO_ZERO = [
-    "TotalTime",
-]
+
 
 def _unique_empty_custom_xml() -> bytes:
-    """Return a minimal custom.xml with random padding per file.
+    """Return a custom.xml with random properties per file.
 
-    Without variation, every processed file would share byte-identical
-    custom.xml — a clear forensic fingerprint.  Random whitespace inside
-    the root element makes each file unique without introducing a regular
-    pattern (like hex comments) that would itself become a signature.
+    An empty skeleton with only xmlns declarations is a forensic fingerprint —
+    all batch-processed files would hash identically.  Adding 0-3 random
+    custom properties makes each file unique and looks like normal Office
+    usage where applications set their own custom metadata.
     """
-    # Random spaces in the root tag — invisible to Office, unique per file
-    padding = b" " * random.randint(0, 40)
-    return (
-        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    lines = [
+        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
         b'<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"'
-        b' xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
-        + padding +
-        b'</Properties>'
-    )
+        b' xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">',
+    ]
+
+    # Add 0-3 random custom properties
+    pid = 2  # Office starts property IDs at 2
+    for _ in range(random.randint(0, 3)):
+        name = random.choice(_CUSTOM_PROP_NAMES)
+        value = random.choice(_CUSTOM_PROP_VALUES)
+        # Mix value types for realism
+        vtype = random.choice(["vt:lpwstr", "vt:i4", "vt:bool"])
+        if vtype == "vt:i4":
+            val_xml = f"<vt:i4>{random.randint(1, 999)}</vt:i4>"
+        elif vtype == "vt:bool":
+            val_xml = f"<vt:bool>{random.choice(['true', 'false'])}</vt:bool>"
+        else:
+            val_xml = f"<vt:lpwstr>{value}</vt:lpwstr>"
+        lines.append(
+            f'  <property fmtid="{{D5CDD505-2E9C-101B-9397-08002B2CF9AE}}" '
+            f'pid="{pid}" name="{name}">{val_xml}</property>'.encode()
+        )
+        pid += 1
+
+    lines.append(b'</Properties>')
+    return b'\n'.join(lines)
 
 
 # ============================================================
@@ -389,19 +383,20 @@ else:
 
 def _clean_app_xml(xml_bytes: bytes, randomize: bool = False,
                    random_state: dict | None = None) -> bytes:
-    """Clear or randomize extended-property metadata in app.xml.
+    """Remove identity-related metadata from app.xml.
 
-    When randomize=False: Company / Manager / Template cleared, TotalTime→0,
-    Application / AppVersion removed, HeadingPairs / TitlesOfParts removed.
+    When randomize=False (default): only removes Company/Manager elements
+    entirely. All other fields (Template, TotalTime, Application, AppVersion,
+    HeadingPairs, TitlesOfParts) are preserved as-is.
     When randomize=True: Company / Manager filled with random company name,
     Template filled with random path, TotalTime set to random value.
     """
     data = xml_bytes
 
-    if randomize and random_state:
-        def _ins(val: bytes):
-            return lambda m: m.group(1) + val + m.group(2)
+    def _ins(val: bytes):
+        return lambda m: m.group(1) + val + m.group(2)
 
+    if randomize and random_state:
         # Company and Manager → random company name (sometimes left empty — 15%)
         company_bytes = _maybe_empty(_xml_escape(random_state["company_name"].encode()))
         for local in ["Company", "Manager"]:
@@ -423,46 +418,45 @@ def _clean_app_xml(xml_bytes: bytes, randomize: bool = False,
             rb"(<TotalTime(?:\s[^>]*)?>)[^<]*(</TotalTime>)",
             _ins(tt_bytes), data,
         )
+
+        # Application / AppVersion → realistic values (randomize mode only)
+        file_ext = random_state.get("ext", "")
+        if file_ext in (".wps", ".et", ".dps"):
+            app_val = random.choice(["WPS Office", "WPS"]).encode()
+            ver_val = random.choice(["12.1.0.25865", "12.1.0.23125", "11.8.2.12013",
+                                      "11.6.0.10872", "11.2.0.10382"]).encode()
+        else:
+            app_val = random.choice(["Microsoft Office Word", "Microsoft Office Excel",
+                                      "Microsoft Office PowerPoint"]).encode()
+            ver_val = random.choice(_OFFICE_VERSIONS).encode()
+        data = re.sub(
+            rb"(<Application(?:\s[^>]*)?>)[^<]*(</Application>)",
+            _ins(app_val), data,
+        )
+        data = re.sub(
+            rb"(<AppVersion(?:\s[^>]*)?>)[^<]*(</AppVersion>)",
+            _ins(ver_val), data,
+        )
+
+        # HeadingPairs / TitlesOfParts → remove in randomize mode (leaks structure)
+        data = re.sub(rb"<HeadingPairs>.*?</HeadingPairs>\s*", b"", data, flags=re.DOTALL)
+        data = re.sub(rb"<TitlesOfParts>.*?</TitlesOfParts>\s*", b"", data, flags=re.DOTALL)
     else:
-        # Clear string fields (Company, Manager, Template)
-        for local in _APP_FIELDS_TO_CLEAR:
+        # Only remove identity-leaking fields — delete the entire element.
+        # Preserve everything else (Template, TotalTime, Application, etc.)
+        for local in ["Company", "Manager"]:
             data = re.sub(
-                rb"(<" + local.encode() + rb"(?:\s[^>]*)?>)"
+                rb"<" + local.encode() + rb"(?:\s[^>]*)?>"
                 rb"[^<]*"
-                rb"(</" + local.encode() + rb">)",
-                rb"\1\2",
+                rb"</" + local.encode() + rb">",
+                b"",
                 data,
             )
-
-        # Zero integer fields (TotalTime)
-        for local in _APP_FIELDS_TO_ZERO:
             data = re.sub(
-                rb"(<" + local.encode() + rb"(?:\s[^>]*)?>)"
-                rb"[^<]*"
-                rb"(</" + local.encode() + rb">)",
-                rb"\g<1>0\g<2>",
+                rb"<" + local.encode() + rb"(?:\s[^>]*)?/>",
+                b"",
                 data,
             )
-
-    # Fields removed in both modes (rebuilt by Office on next save)
-    for local in _APP_FIELDS_TO_REMOVE:
-        data = re.sub(
-            rb"<" + local.encode() + rb"(?:\s[^>]*)?>"
-            rb"[^<]*"
-            rb"</" + local.encode() + rb">",
-            b"",
-            data,
-        )
-        data = re.sub(
-            rb"<" + local.encode() + rb"(?:\s[^>]*)?/>",
-            b"",
-            data,
-        )
-
-    # Remove HeadingPairs and TitlesOfParts — these leak slide titles and
-    # document structure. Office rebuilds them on next save.
-    data = re.sub(rb"<HeadingPairs>.*?</HeadingPairs>\s*", b"", data, flags=re.DOTALL)
-    data = re.sub(rb"<TitlesOfParts>.*?</TitlesOfParts>\s*", b"", data, flags=re.DOTALL)
 
     return data
 
@@ -512,29 +506,27 @@ def clean_office_file(filepath: str, randomize: bool = False,
     and company_name keys (from generate_unique_identities).
     """
     # Build random_state once per file so sub-functions share the same values
+    ext = Path(filepath).suffix.lower()
     if randomize and identity:
         random_state = {
             "author_name": identity["author_name"],
             "company_name": identity["company_name"],
             "times": randomize_times(os.path.getmtime(filepath)),
-            "template": random_template(identity["author_name"], os.path.splitext(filepath)[1].lower()),
+            "template": random_template(identity["author_name"], ext),
             "total_time": random_total_time(),
             "revision": str(random.randint(1, 50)),
+            "ext": ext,
         }
     else:
         random_state = None
 
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(filepath),
-                                     prefix=".mdc-", suffix=".tmp")
+                                     prefix=".~tmp-", suffix=".tmp")
     os.close(fd)
 
     try:
-        # Vary compression level per file (default=6) to avoid
-        # a consistent ZIP fingerprint across batch-processed files
-        _compress = random.randint(3, 9)
         with zipfile.ZipFile(filepath, "r") as zin, \
-             zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED,
-                             compresslevel=_compress) as zout:
+             zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
             for item in zin.infolist():
                 name = item.filename
 
@@ -571,6 +563,15 @@ def clean_office_file(filepath: str, randomize: bool = False,
                         rb'<p:tag\s[^>]*?\bname="(?:KSO_|COMMONDATA)[^"]*"[^>]*/>',
                         b"",
                         zin.read(name),
+                    )
+                    zout.writestr(item, cleaned)
+                # Clean settings.xml — remove w:docId (GUID that links copies)
+                elif name == "word/settings.xml":
+                    cleaned = zin.read(name)
+                    cleaned = re.sub(
+                        rb'<w:docId\s[^>]*/>',
+                        b'',
+                        cleaned,
                     )
                     zout.writestr(item, cleaned)
                 # Stream everything else as-is (no memory accumulation)
@@ -644,8 +645,8 @@ def _strip_pdf_raw_bytes(path: str) -> None:
     content = re.sub(rb"(/URI\s?\()((?:[^\\]|\\.)*?)(\))", _pad_uri, content)
 
     # --- Per-image XMP attributes ---
-    # Use equal-width space padding to avoid breaking XREF byte offsets.
-    # PDF streams have a /Length entry; changing content length corrupts the file.
+    # Use equal-width space padding to preserve stream /Length and XREF offsets.
+    # Clearing values to "" would change byte count and corrupt the PDF.
     def _pad_xmp_attr(m: re.Match) -> bytes:
         prefix = m.group(1)   # e.g. xmp:CreatorTool="
         value = m.group(2)    # the value between quotes
@@ -688,7 +689,7 @@ def clean_pdf_file(filepath: str, randomize: bool = False,
         return False, "PDF 组件未安装，请运行 setup.bat (Windows) 或 setup.sh (macOS) 安装依赖。"
 
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(filepath),
-                                     prefix=".mdc-", suffix=".tmp")
+                                     prefix=".~tmp-", suffix=".tmp")
     os.close(fd)
 
     try:
@@ -702,21 +703,18 @@ def clean_pdf_file(filepath: str, randomize: bool = False,
                 for page in reader.pages:
                     writer.add_page(page)
 
-            # Clear all info-dict fields — setting to " " satisfies pypdf's
-            # truthiness check while preventing auto-injected Producer
-            writer.add_metadata({
-                "/Producer": " ",
-                "/Creator": " ",
-                "/CreationDate": " ",
-                "/ModDate": " ",
-                "/Title": " ",
-                "/Author": " ",
-                "/Subject": " ",
-                "/Keywords": " ",
-                "/Comments": " ",
-                "/Company": " ",
-                "/SourceModified": " ",
-            })
+            # Clear all info-dict fields — remove keys entirely from the
+            # internal dict so pypdf doesn't write space-padded stubs.
+            # Using add_metadata(" ") leaves "( )" in the file, which is
+            # a detectable tool fingerprint.
+            _fields_to_clear = [
+                "/Producer", "/Creator", "/CreationDate", "/ModDate",
+                "/Title", "/Author", "/Subject", "/Keywords",
+                "/Comments", "/Company", "/SourceModified",
+            ]
+            info_obj = writer._info.get_object() if hasattr(writer._info, 'get_object') else writer._info
+            for key in _fields_to_clear:
+                info_obj.pop(key, None)
 
             with open(tmp_path, "wb") as fout:
                 writer.write(fout)
@@ -755,7 +753,7 @@ def clean_image_file(filepath: str, randomize: bool = False,
     Uses atomic temp-file replacement. Returns (success, error_message).
     """
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(filepath),
-                                     prefix=".mdc-", suffix=".tmp")
+                                     prefix=".~tmp-", suffix=".tmp")
     os.close(fd)
 
     try:
@@ -1761,22 +1759,22 @@ class MetadataCleanerApp:
         txt.insert(tk.END, "PDF 文档\n", "body")
         txt.insert(tk.END, "图片文件: .jpg / .png / .gif / .bmp / .tiff / .webp / .heic\n\n", "body")
 
-        # Cleanable metadata
-        txt.insert(tk.END, "可清除或随机化的元数据包括\n", "heading")
-        txt.insert(tk.END, "作者、创建时间、修改时间、公司、版本等基本信息\n", "body")
-        txt.insert(tk.END, "自定义属性（custom.xml）- 老版本 Office 或第三方插件残留\n", "body")
-        txt.insert(tk.END, "第三方插件信息 - SharePoint、云盘同步工具等写入的路径和标识符\n", "body")
-        txt.insert(tk.END, "嵌入图片元数据 - 从微信、QQ、截图工具粘贴的图片携带的隐藏信息\n", "body")
-        txt.insert(tk.END, "图片源路径（document.xml descr 属性）- 最隐蔽的泄露点\n\n", "body")
+        # Cleanable metadata — clear mode
+        txt.insert(tk.END, "清空模式（默认）\n", "heading")
+        txt.insert(tk.END, "仅删除暴露身份的字段，其余保留原值：\n", "body")
+        txt.insert(tk.END, "• 删除 — 作者、最后修改者、公司、管理者\n", "body")
+        txt.insert(tk.END, "• 保留 — 时间戳、修订号、标题、模板、编辑时长等\n", "body")
+        txt.insert(tk.END, "• 嵌入图片 EXIF 元数据 — 微信/QQ/截图工具粘贴的图片携带的信息\n", "body")
+        txt.insert(tk.END, "• 图片源路径 — document.xml descr 属性中最隐蔽的泄露点\n\n", "body")
 
         # Randomization feature
-        txt.insert(tk.END, "随机化模式（v1.3 可选功能）\n", "heading")
-        txt.insert(tk.END, "默认不勾选 = 清空元数据（原有行为）。勾选后替换为随机仿真值：\n", "body")
+        txt.insert(tk.END, "随机化模式（可选）\n", "heading")
+        txt.insert(tk.END, "勾选后，所有元数据替换为随机仿真值：\n", "body")
         txt.insert(tk.END, "• 人名 — 拼音连写/英文名/键盘缩写等多风格混合\n", "body")
         txt.insert(tk.END, "• 公司 — 科技行业品牌简称，无城市前缀，极少后缀\n", "body")
         txt.insert(tk.END, "• 时间戳 — 基于文件实际时间锚定，偏差 ≤ 2 天，避开凌晨\n", "body")
         txt.insert(tk.END, "• 批次唯一保障 — 同批文件的人名和公司名绝不重复\n", "body")
-        txt.insert(tk.END, "• 抗取证设计 — custom.xml 填充、ZIP 压缩随机化、时间戳散列\n", "body")
+        txt.insert(tk.END, "• 抗取证设计 — custom.xml 随机填充、时间戳散列\n", "body")
         txt.insert(tk.END, "• 字段随机留空 — 模仿真实文件不完全填满的状态\n\n", "body")
 
         # Privacy highlight
