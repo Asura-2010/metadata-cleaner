@@ -1985,11 +1985,20 @@ def main():
     else:
         root = None
         if HAS_DND:
-            try:
-                root = TkinterDnD.Tk()
-            except RuntimeError:
-                HAS_DND = False
+            if sys.platform == "darwin":
+                # On macOS, TkinterDnD.Tk() creates an extra blank window.
+                # Use standard tk.Tk() and manually load tkdnd instead.
                 root = tk.Tk()
+                try:
+                    root.tk.eval('package require tkdnd')
+                except tk.TclError:
+                    HAS_DND = False
+            else:
+                try:
+                    root = TkinterDnD.Tk()
+                except RuntimeError:
+                    HAS_DND = False
+                    root = tk.Tk()
 
         if root is None:
             root = tk.Tk()
