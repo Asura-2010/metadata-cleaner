@@ -192,7 +192,7 @@ def random_template(author_name: str | None = None, ext: str = ".docx") -> str:
     .pptx/.dps → Blank.potx.
     """
     _WIN_USERS = ["user", "Default", "Administrator", "Owner", "Admin",
-                  "Public", "Lenovo", "ThinkPad", "HP", "ASUS", "Dell",
+                  "Lenovo", "ThinkPad", "HP", "ASUS", "Dell",
                   "zhangsan", "lisi", "wangwu", "xiaoming"]
     _MAC_USERS = ["user", "Shared", "admin", "mac", "apple"]
 
@@ -224,24 +224,26 @@ def random_template(author_name: str | None = None, ext: str = ".docx") -> str:
         u = _pick_user(_WIN_USERS)
         t = random.choice(_TMPL)
         variant = random.random()
-        if variant < 0.35:
-            # Per-user template folder (most common)
+        if variant < 0.50:
+            # Per-user template folder — most common in practice
             return f"C:\\Users\\{u}\\AppData\\Roaming\\Microsoft\\Templates\\{t}"
-        elif variant < 0.60:
-            # Custom Office Templates (Office 2013+ default)
+        elif variant < 0.78:
+            # Custom Office Templates (Office 2013+)
             return f"C:\\Users\\{u}\\Documents\\Custom Office Templates\\{t}"
-        elif variant < 0.80:
-            # System-wide Click-to-Run templates (Office 365/2019/2021)
-            ver = random.choice(["16.0", "15.0"])
+        elif variant < 0.88:
+            # System-wide Click-to-Run (Office 365/2019/2021) — less common
+            ver = random.choice(["16.0", "16.0", "16.0", "15.0"])
+            lcid = random.choice(["2052"] * 19 + ["1033"])
             return (f"C:\\Program Files\\Microsoft Office\\root\\Office{ver}"
-                    f"\\Templates\\1033\\{t}")
-        elif variant < 0.93:
-            # System-wide MSI templates (Office 2016/2013/2010)
+                    f"\\Templates\\{lcid}\\{t}")
+        elif variant < 0.95:
+            # System-wide MSI (Office 2016/2013/2010) — even less common
             arch = random.choice(["Program Files", "Program Files (x86)"])
-            ver = random.choice(["Office16", "Office15", "Office14"])
-            return f"C:\\{arch}\\Microsoft Office\\{ver}\\Templates\\1033\\{t}"
+            ver = random.choice(["Office16", "Office16", "Office15", "Office14"])
+            lcid = random.choice(["2052"] * 19 + ["1033"])
+            return f"C:\\{arch}\\Microsoft Office\\{ver}\\Templates\\{lcid}\\{t}"
         else:
-            # Public / shared machine template folder
+            # Public / shared machine
             return f"C:\\Users\\Public\\Documents\\Custom Office Templates\\{t}"
 
     else:  # 12% macOS
@@ -364,25 +366,25 @@ def _random_company_style(name: str) -> str:
         return "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ",
                                       k=random.randint(2, 4)))
 
-    # Weighted styles: most people use short names or random letters
+    # Weighted styles: most people use short names or random letters.
+    # Co., Ltd. is kept very low — real office metadata rarely has it.
     style_weights = [
         # Short random letters (most common real-world pattern)
-        (_random_abbrev,                                 35),
+        (_random_abbrev,                                 36),
         (lambda _s: _random_abbrev(_s).lower(),          18),
         # Short form: "HuaSheng Tech"
-        (_short,                                         15),
-        (lambda s: _short(s).lower(),                     8),
+        (_short,                                         16),
+        (lambda s: _short(s).lower(),                     9),
         # Full form: "HuaSheng Technology"
         (lambda s: s,                                     8),
-        (lambda s: s.lower(),                             4),
-        # Rarely: add Co., Ltd. suffix
-        (lambda s: f"{_short(s)} Co., Ltd.",              3),
-        (lambda s: f"{_short(s)} Co. Ltd.",               2),
-        (lambda s: f"{s} Co., Ltd.",                      2),
+        (lambda s: s.lower(),                             5),
         # Oddballs
         (lambda s: s.upper(),                             2),
-        (_short,                                          1),  # extra weight
-        (lambda s: f"{_short(s).lower()}",                2),
+        (lambda s: f"{_short(s).lower()}",                3),
+        # Rarely: add Co., Ltd. suffix
+        (lambda s: f"{_short(s)} Co., Ltd.",              1),
+        (lambda s: f"{s} Co., Ltd.",                      1),
+        (lambda s: f"{_short(s)} Co. Ltd.",               1),
     ]
     styles, weights = zip(*style_weights)
     return random.choices(styles, weights=weights, k=1)[0](name)

@@ -4,7 +4,7 @@ Metadata Cleaner - Cross-platform tool to remove metadata from Office files & PD
 Works on Windows, macOS, and Linux.
 """
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 import os
 import re
@@ -308,13 +308,83 @@ _APP_FIELDS_TO_ZERO = [
     "TotalTime",
 ]
 
-# Minimal valid custom.xml to replace dropped custom properties
-_EMPTY_CUSTOM_XML = (
-    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-    b'<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"'
-    b' xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
-    b'</Properties>'
-)
+def _unique_empty_custom_xml() -> bytes:
+    """Return a minimal custom.xml with random padding per file.
+
+    Without variation, every processed file would share byte-identical
+    custom.xml — a clear forensic fingerprint.  Random whitespace inside
+    the root element makes each file unique without introducing a regular
+    pattern (like hex comments) that would itself become a signature.
+    """
+    # Random spaces in the root tag — invisible to Office, unique per file
+    padding = b" " * random.randint(0, 40)
+    return (
+        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        b'<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"'
+        b' xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
+        + padding +
+        b'</Properties>'
+    )
+
+
+# ============================================================
+# Anti-forensics: filesystem timestamp scattering
+# ============================================================
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    class _FILETIME(ctypes.Structure):
+        _fields_ = [("dwLowDateTime", wintypes.DWORD),
+                    ("dwHighDateTime", wintypes.DWORD)]
+
+    def _scatter_file_timestamps(filepath: str) -> None:
+        """Windows: scatter ctime/atime/mtime and sync NTFS $SIA/$FNA.
+
+        Uses SetFileTime to set all three timestamps, then renames the file
+        (rename-then-back) to force Windows to copy $SIA → $FNA, eliminating
+        the timestomping signature that forensic tools detect.
+        """
+        scattered = time.time() - random.randint(300, 259200)
+        ft = _unix_to_filetime(scattered)
+
+        handle = ctypes.windll.kernel32.CreateFileW(
+            filepath, 0x40000000, 0, None, 3, 0x80, None
+        )
+        if handle == -1:
+            return
+        try:
+            ctypes.windll.kernel32.SetFileTime(
+                handle, ctypes.byref(ft), ctypes.byref(ft), ctypes.byref(ft)
+            )
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+
+        # Rename trick: sync $SIA → $FNA so forensic tools see consistent timestamps
+        tmp_name = filepath + ".ts_sync"
+        try:
+            os.rename(filepath, tmp_name)
+            os.rename(tmp_name, filepath)
+        except OSError:
+            pass
+
+    def _unix_to_filetime(unix_ts: float):
+        """Convert Unix timestamp to Windows FILETIME (100ns intervals since 1601)."""
+        ticks = int((unix_ts + 11644473600) * 10000000)
+        return _FILETIME(ticks & 0xFFFFFFFF, ticks >> 32)
+
+else:
+    def _scatter_file_timestamps(filepath: str) -> None:
+        """macOS/Linux: scatter only mtime/atime (ctime is kernel-controlled).
+
+        ctime will cluster at processing time — see README for mitigation.
+        """
+        scattered = time.time() - random.randint(300, 259200)
+        try:
+            os.utime(filepath, (scattered, scattered))
+        except OSError:
+            pass
 
 
 def _clean_app_xml(xml_bytes: bytes, randomize: bool = False,
@@ -459,8 +529,12 @@ def clean_office_file(filepath: str, randomize: bool = False,
     os.close(fd)
 
     try:
+        # Vary compression level per file (default=6) to avoid
+        # a consistent ZIP fingerprint across batch-processed files
+        _compress = random.randint(3, 9)
         with zipfile.ZipFile(filepath, "r") as zin, \
-             zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
+             zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED,
+                             compresslevel=_compress) as zout:
             for item in zin.infolist():
                 name = item.filename
 
@@ -474,7 +548,7 @@ def clean_office_file(filepath: str, randomize: bool = False,
                     zout.writestr(item, cleaned)
                 # Clean custom.xml — replace with empty skeleton
                 elif name == "docProps/custom.xml":
-                    zout.writestr(item, _EMPTY_CUSTOM_XML)
+                    zout.writestr(item, _unique_empty_custom_xml())
                 # Clean image source paths + optionally RSIDs
                 elif (name == "word/document.xml"
                       or name.startswith("ppt/slides/slide")
@@ -511,6 +585,12 @@ def clean_office_file(filepath: str, randomize: bool = False,
         except OSError:
             pass
         os.replace(tmp_path, filepath)
+
+        # Scatter filesystem timestamps within last 3 days.
+        # Windows: all three (ctime/atime/mtime) via SetFileTime + rename sync.
+        # macOS/Linux: mtime/atime only (ctime is kernel-controlled).
+        _scatter_file_timestamps(filepath)
+
         return True, None
 
     except Exception as exc:
@@ -1646,14 +1726,14 @@ class MetadataCleanerApp:
         """Show about dialog with program info and usage help."""
         dlg = tk.Toplevel(self.root)
         dlg.title("关于")
-        dlg.geometry("440x600")
+        dlg.geometry("450x680")
         dlg.transient(self.root)
         dlg.grab_set()
 
         content = ttk.Frame(dlg, padding="16")
         content.pack(fill=tk.BOTH, expand=True)
 
-        txt = tk.Text(content, wrap=tk.WORD, font=("", 11), state=tk.DISABLED, height=28)
+        txt = tk.Text(content, wrap=tk.WORD, font=("", 11), state=tk.DISABLED, height=32)
         sb = ttk.Scrollbar(content, command=txt.yview)
         txt.configure(yscrollcommand=sb.set)
         txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -1692,10 +1772,11 @@ class MetadataCleanerApp:
         # Randomization feature
         txt.insert(tk.END, "随机化模式（v1.3 可选功能）\n", "heading")
         txt.insert(tk.END, "默认不勾选 = 清空元数据（原有行为）。勾选后替换为随机仿真值：\n", "body")
-        txt.insert(tk.END, "• 人名 — 中文拼音/英文名/缩写等多风格混合\n", "body")
-        txt.insert(tk.END, "• 公司 — 中文城市+品牌+行业的真实风格名称\n", "body")
-        txt.insert(tk.END, "• 时间戳 — 符合逻辑顺序的随机日期时间\n", "body")
-        txt.insert(tk.END, "• 批次唯一保障 — 同一批多个文件的人名和公司名绝不重复\n", "body")
+        txt.insert(tk.END, "• 人名 — 拼音连写/英文名/键盘缩写等多风格混合\n", "body")
+        txt.insert(tk.END, "• 公司 — 科技行业品牌简称，无城市前缀，极少后缀\n", "body")
+        txt.insert(tk.END, "• 时间戳 — 基于文件实际时间锚定，偏差 ≤ 2 天，避开凌晨\n", "body")
+        txt.insert(tk.END, "• 批次唯一保障 — 同批文件的人名和公司名绝不重复\n", "body")
+        txt.insert(tk.END, "• 抗取证设计 — custom.xml 填充、ZIP 压缩随机化、时间戳散列\n", "body")
         txt.insert(tk.END, "• 字段随机留空 — 模仿真实文件不完全填满的状态\n\n", "body")
 
         # Privacy highlight
@@ -1705,6 +1786,17 @@ class MetadataCleanerApp:
         txt.insert(tk.END, "注意事项\n", "heading")
         txt.insert(tk.END, "本工具清除文件属性元数据，不清除文档正文中的批注与修订记录。\n", "body")
         txt.insert(tk.END, "旧版二进制格式（.doc/.xls/.ppt）不支持，请另存为新版格式后再处理。\n\n", "body")
+
+        # macOS ctime note
+        txt.insert(tk.END, "macOS 用户注意\n", "heading")
+        txt.insert(tk.END,
+            "macOS 受内核限制无法修改文件 ctime（状态变更时间），\n"
+            "批量处理后所有文件的 ctime 会集中在同一时刻。\n"
+            "建议分批处理文件（每批少量，间隔手动停顿），\n"
+            "以自然散列 ctime，避免被取证工具关联。\n"
+            "Windows 平台无此限制，工具会自动完整散列所有时间戳。\n\n",
+            "body",
+        )
 
         # Usage
         txt.insert(tk.END, "使用方式\n", "heading")
