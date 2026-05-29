@@ -4,11 +4,12 @@ Metadata Cleaner - Cross-platform tool to remove metadata from Office files & PD
 Works on Windows, macOS, and Linux.
 """
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 import os
 import re
 import sys
+import json
 import time
 import random
 import shutil
@@ -38,6 +39,9 @@ except ImportError:
     HAS_DND = False
     TkinterDnD = None  # type: ignore[assignment]
     DND_FILES = None
+
+# Config file for remembering window size and layout
+CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".metadata-cleaner-config.json")
 
 # ============================================================
 # Configuration
@@ -1396,8 +1400,8 @@ class MetadataCleanerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(f"元数据清除工具 v{__version__}")
-        self.root.geometry("700x580")
-        self.root.minsize(580, 500)
+        self.root.geometry("1200x800")
+        self.root.minsize(960, 600)
 
         # Set window icon (Windows taskbar and thumbnail)
         if sys.platform == "win32":
@@ -1422,6 +1426,7 @@ class MetadataCleanerApp:
         self.files: list[str] = []
         self._cleaning = False  # guard against closing during processing
         self._build_ui()
+        self._load_config()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # -- UI construction --------------------------------------------------
@@ -1436,7 +1441,7 @@ class MetadataCleanerApp:
 
         ttk.Label(header, text="元数据清除工具", font=("", 16, "bold")).pack(side=tk.LEFT)
 
-        self.btn_about = ttk.Button(header, text="关于", command=self._show_about, width=6)
+        self.btn_about = ttk.Button(header, text="说明", command=self._show_about, width=6)
         self.btn_about.pack(side=tk.RIGHT)
 
         ttk.Label(
@@ -1464,9 +1469,15 @@ class MetadataCleanerApp:
                 font=("", 9),
             ).pack()
 
-        # File list
-        list_frame = ttk.LabelFrame(main, text="文件列表", padding="6")
-        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        # Two-column layout: left = file list, right = metadata panel
+        self.paned = ttk.PanedWindow(main, orient=tk.HORIZONTAL)
+
+        # === Left column: file list ===
+        left = ttk.Frame(self.paned)
+        self.paned.add(left, weight=1)
+
+        list_frame = ttk.LabelFrame(left, text="文件列表", padding="6")
+        list_frame.pack(fill=tk.BOTH, expand=True)
 
         inner = ttk.Frame(list_frame)
         inner.pack(fill=tk.BOTH, expand=True)
@@ -1491,28 +1502,63 @@ class MetadataCleanerApp:
         if HAS_DND:
             self.listbox.drop_target_register(DND_FILES)
             self.listbox.dnd_bind("<<Drop>>", self._on_drop)
-            # Also register the whole window for drops
             if hasattr(self.root, 'drop_target_register'):
                 self.root.drop_target_register(DND_FILES)
                 self.root.dnd_bind("<<Drop>>", self._on_drop)
 
-        # Randomize option — standalone row for visibility
-        rand_frame = ttk.LabelFrame(main, text="处理模式（可选）", padding="8")
-        rand_frame.pack(fill=tk.X, pady=(0, 8))
+        # === Right column: metadata panel ===
+        right = ttk.Frame(self.paned)
+        self.paned.add(right, weight=2)
 
-        self.randomize_var = tk.BooleanVar(value=False)
-        self.chk_random = ttk.Checkbutton(
-            rand_frame,
-            text="随机化：替换元数据为随机仿真值（人名、公司名、时间戳等）。不勾选 = 清空元数据",
-            variable=self.randomize_var,
+        meta_frame = ttk.LabelFrame(right, text="元数据信息", padding="6")
+        meta_frame.pack(fill=tk.BOTH, expand=True)
+
+        meta_inner = ttk.Frame(meta_frame)
+        meta_inner.pack(fill=tk.BOTH, expand=True)
+
+        meta_sb = ttk.Scrollbar(meta_inner)
+        meta_sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.meta_text = tk.Text(
+            meta_inner, wrap=tk.WORD, font=("", 11),
+            padx=8, pady=8, state=tk.DISABLED,
+            yscrollcommand=meta_sb.set,
         )
-        self.chk_random.pack(side=tk.LEFT)
+        self.meta_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        meta_sb.config(command=self.meta_text.yview)
 
-        # Action buttons
+        # Metadata display tags
+        self.meta_text.tag_configure("cat_header", foreground="#B45309", font=("", 11, "bold"), spacing3=4)
+        self.meta_text.tag_configure("cat_warn", foreground="#C2410C", font=("", 11, "bold"), spacing3=4)
+        self.meta_text.tag_configure("label", foreground="#334155")
+        self.meta_text.tag_configure("value", foreground="#0F172A")
+        self.meta_text.tag_configure("value_warn", foreground="#B91C1C")
+        self.meta_text.tag_configure("error", foreground="#DC2626", font=("", 11, "bold"))
+
+        # Placeholder
+        self.meta_text.configure(state=tk.NORMAL)
+        self.meta_text.insert(tk.END, "请在左侧选择文件以查看元数据", "label")
+        self.meta_text.configure(state=tk.DISABLED)
+
+        # Auto-update on selection change
+        self.listbox.bind("<<ListboxSelect>>", self._on_selection_change)
+
+        # === Bottom bar: controls spanning full width ===
+        # Pack bottom-to-top with side=BOTTOM so shrinking the window
+        # squeezes the paned first, keeping buttons always visible.
+
+        ready_text = "就绪 — 请添加文件"
+        if not HAS_PDF_SUPPORT:
+            ready_text += "  (PDF 功能需安装 pypdf)"
+        self.status_var = tk.StringVar(value=ready_text)
+        ttk.Label(main, textvariable=self.status_var, font=("", 9)).pack(side=tk.BOTTOM, anchor=tk.W)
+
+        self.progress = ttk.Progressbar(main, mode="determinate")
+        self.progress.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 4))
+
         btn_frame = ttk.Frame(main)
-        btn_frame.pack(fill=tk.X, pady=(0, 10))
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 10))
 
-        # Left: management buttons
         self.btn_add = ttk.Button(btn_frame, text="添加文件", command=self._add_files)
         self.btn_add.pack(side=tk.LEFT, padx=(0, 6))
 
@@ -1522,11 +1568,6 @@ class MetadataCleanerApp:
         self.btn_clear = ttk.Button(btn_frame, text="清空列表", command=self._clear_files)
         self.btn_clear.pack(side=tk.LEFT, padx=(0, 6))
 
-        self.btn_view = ttk.Button(btn_frame, text="查看元数据", command=self._view_metadata)
-        self.btn_view.pack(side=tk.LEFT, padx=(0, 6))
-
-        # Right: prominent red clean button
-        # Use Label instead of Button for cross-platform bg/fg support (macOS Button ignores colors)
         self.btn_clean = tk.Label(
             btn_frame,
             text="  清除元数据  ",
@@ -1542,16 +1583,19 @@ class MetadataCleanerApp:
         self.btn_clean.bind("<Enter>", lambda e: self.btn_clean.config(bg="#c0392b"))
         self.btn_clean.bind("<Leave>", lambda e: self.btn_clean.config(bg="#e74c3c"))
 
-        # Progress bar
-        self.progress = ttk.Progressbar(main, mode="determinate")
-        self.progress.pack(fill=tk.X, pady=(0, 4))
+        rand_frame = ttk.LabelFrame(main, text="处理模式（可选）", padding="8")
+        rand_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 8))
 
-        # Status
-        ready_text = "就绪 — 请添加文件"
-        if not HAS_PDF_SUPPORT:
-            ready_text += "  (PDF 功能需安装 pypdf)"
-        self.status_var = tk.StringVar(value=ready_text)
-        ttk.Label(main, textvariable=self.status_var, font=("", 9)).pack(anchor=tk.W)
+        self.randomize_var = tk.BooleanVar(value=False)
+        self.chk_random = ttk.Checkbutton(
+            rand_frame,
+            text="随机化：替换元数据为随机仿真值（人名、公司名、时间戳等）。不勾选 = 清空元数据",
+            variable=self.randomize_var,
+        )
+        self.chk_random.pack(side=tk.LEFT)
+
+        # Pack paned last so it fills remaining space above the bottom bar
+        self.paned.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(0, 6))
 
     # -- Button callbacks -------------------------------------------------
 
@@ -1592,7 +1636,6 @@ class MetadataCleanerApp:
             self.listbox.selection_set(idx)
 
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="查看元数据", command=self._view_metadata)
         if not self._cleaning:
             menu.add_command(label="移除选中", command=self._remove_selected)
             menu.add_command(label="清空列表", command=self._clear_files)
@@ -1601,105 +1644,56 @@ class MetadataCleanerApp:
         finally:
             menu.grab_release()
 
-    def _view_metadata(self):
-        """Show metadata for selected file(s) in a popup window."""
+    def _on_selection_change(self, event=None):
+        """Update the right-side metadata panel when a file is selected."""
         selected = self.listbox.curselection()
-        if not selected:
-            messagebox.showwarning("提示", "请先在文件列表中选择一个文件。")
-            return
 
-        # Only show first selected file's metadata (to keep the dialog clean)
-        idx = selected[0]
-        filepath = self.files[idx]
-        fname = os.path.basename(filepath)
+        self.meta_text.configure(state=tk.NORMAL)
+        try:
+            self.meta_text.delete("1.0", tk.END)
 
-        metadata = read_metadata(filepath)
+            if not selected:
+                self.meta_text.insert(tk.END, "请在左侧选择文件以查看元数据", "label")
+                return
 
-        # Build display window
-        dlg = tk.Toplevel(self.root)
-        dlg.title(f"元数据 — {fname}")
-        dlg.geometry("520x420")
-        dlg.minsize(400, 300)
-        dlg.transient(self.root)
-        dlg.grab_set()
+            idx = selected[0]
+            filepath = self.files[idx]
+            fname = os.path.basename(filepath)
 
-        # Header
-        header = ttk.Frame(dlg, padding="12")
-        header.pack(fill=tk.X)
-        ttk.Label(header, text=fname, font=("", 13, "bold")).pack(anchor=tk.W)
-        ttk.Label(
-            header,
-            text="以下为文件当前包含的元数据，可供清除前核对",
-            font=("", 9),
-        ).pack(anchor=tk.W, pady=(2, 0))
+            if len(selected) > 1:
+                self.meta_text.insert(tk.END, f"已选 {len(selected)} 个文件，仅显示首项\n\n", "label")
 
-        # Scrollable content
-        content = ttk.Frame(dlg, padding="12")
-        content.pack(fill=tk.BOTH, expand=True)
+            try:
+                metadata = read_metadata(filepath)
+            except Exception as e:
+                metadata = {"错误": {"读取失败": str(e)}}
 
-        txt = tk.Text(
-            content,
-            wrap=tk.WORD,
-            font=("", 11),
-            padx=8,
-            pady=8,
-            state=tk.DISABLED,
-        )
-        sb = ttk.Scrollbar(content, command=txt.yview)
-        txt.configure(yscrollcommand=sb.set)
+            WARN_CATEGORIES = {
+                "图片源路径", "链接 URL", "批注", "修订",
+                "嵌入图片元数据", "批注和修订",
+            }
 
-        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
+            def _is_warn_cat(cat):
+                return cat in WARN_CATEGORIES or cat.startswith("图片XMP-") or cat.startswith("嵌入图片")
 
-        # Configure color tags for metadata display
-        # Category headers — gold/amber, bold
-        txt.tag_configure("cat_header", foreground="#B45309", font=("", 11, "bold"), spacing3=4)
-        txt.tag_configure("cat_warn", foreground="#C2410C", font=("", 11, "bold"), spacing3=4)
-        # Field labels
-        txt.tag_configure("label", foreground="#334155")
-        # Values — high contrast
-        txt.tag_configure("value", foreground="#0F172A")
-        txt.tag_configure("value_warn", foreground="#B91C1C")
-        # Error
-        txt.tag_configure("error", foreground="#DC2626", font=("", 11, "bold"))
+            self.meta_text.insert(tk.END, f"{fname}\n", "cat_header")
 
-        # Warning categories that deserve visual emphasis
-        WARN_CATEGORIES = {
-            "图片源路径", "链接 URL", "批注", "修订",
-            "嵌入图片元数据", "批注和修订",
-        }
-
-        def _is_warn_cat(cat: str) -> bool:
-            if cat in WARN_CATEGORIES:
-                return True
-            if cat.startswith("图片XMP-"):
-                return True
-            if cat.startswith("嵌入图片"):
-                return True
-            return False
-
-        # Insert formatted metadata
-        txt.configure(state=tk.NORMAL)
-        if "错误" in metadata:
-            for key, val in metadata["错误"].items():
-                txt.insert(tk.END, f"\n{key}: ", "error")
-                txt.insert(tk.END, f"{val}\n", "error")
-        else:
-            for category, fields in metadata.items():
-                header_tag = "cat_warn" if _is_warn_cat(category) else "cat_header"
-                txt.insert(tk.END, f"\n── {category} ──\n\n", header_tag)
-                for label, value in fields.items():
-                    display_val = str(value)
-                    lbl_key = label + ":  " if label else ""
-                    val_tag = "value_warn" if _is_warn_cat(category) else "value"
-                    txt.insert(tk.END, f"  {lbl_key}", "label")
-                    txt.insert(tk.END, f"{display_val}\n", val_tag)
-        txt.configure(state=tk.DISABLED)
-
-        # Close button
-        btn_frame = ttk.Frame(dlg, padding="12")
-        btn_frame.pack(fill=tk.X)
-        ttk.Button(btn_frame, text="关闭", command=dlg.destroy).pack(side=tk.RIGHT)
+            if "错误" in metadata:
+                for key, val in metadata["错误"].items():
+                    self.meta_text.insert(tk.END, f"\n{key}: ", "error")
+                    self.meta_text.insert(tk.END, f"{val}\n", "error")
+            else:
+                for category, fields in metadata.items():
+                    header_tag = "cat_warn" if _is_warn_cat(category) else "cat_header"
+                    self.meta_text.insert(tk.END, f"\n── {category} ──\n\n", header_tag)
+                    for label, value in fields.items():
+                        display_val = str(value)
+                        lbl_key = label + ":  " if label else ""
+                        val_tag = "value_warn" if _is_warn_cat(category) else "value"
+                        self.meta_text.insert(tk.END, f"  {lbl_key}", "label")
+                        self.meta_text.insert(tk.END, f"{display_val}\n", val_tag)
+        finally:
+            self.meta_text.configure(state=tk.DISABLED)
 
     def _on_drop(self, event):
         """Handle file drop from OS file manager (requires tkinterdnd2)."""
@@ -1723,7 +1717,7 @@ class MetadataCleanerApp:
     def _show_about(self):
         """Show about dialog with program info and usage help."""
         dlg = tk.Toplevel(self.root)
-        dlg.title("关于")
+        dlg.title("说明")
         dlg.geometry("450x680")
         dlg.transient(self.root)
         dlg.grab_set()
@@ -1923,14 +1917,39 @@ class MetadataCleanerApp:
             self._clear_files()
 
     def _toggle_buttons(self, state):
-        for b in (self.btn_add, self.btn_remove, self.btn_clear, self.btn_view, self.btn_about, self.btn_clean, self.chk_random):
+        for b in (self.btn_add, self.btn_remove, self.btn_clear, self.btn_about, self.btn_clean, self.chk_random):
             b.config(state=state)
 
     def _on_close(self):
         if self._cleaning:
             messagebox.showwarning("提示", "正在处理中，请等待完成后再关闭窗口。")
         else:
+            self._save_config()
             self.root.destroy()
+
+    def _load_config(self):
+        """Restore saved window size and column split ratio."""
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                cfg = json.load(f)
+            if "geometry" in cfg:
+                self.root.geometry(cfg["geometry"])
+            if "sash_pos" in cfg:
+                self.root.after(100, lambda p=cfg["sash_pos"]: self.paned.sashpos(0, p) if self.paned.winfo_exists() else None)
+        except Exception:
+            pass
+
+    def _save_config(self):
+        """Save window size and column split ratio."""
+        try:
+            cfg = {
+                "geometry": self.root.geometry(),
+                "sash_pos": self.paned.sashpos(0),
+            }
+            with open(CONFIG_PATH, "w") as f:
+                json.dump(cfg, f)
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -1987,10 +2006,15 @@ def main():
         if HAS_DND:
             if sys.platform == "darwin":
                 # On macOS, TkinterDnD.Tk() creates an extra blank window.
-                # Use standard tk.Tk() and manually load tkdnd instead.
+                # Use standard tk.Tk() and manually load tkdnd's Tcl library.
                 root = tk.Tk()
                 try:
-                    root.tk.eval('package require tkdnd')
+                    import tkinterdnd2
+                    import platform
+                    arch = 'osx-arm64' if platform.machine() == 'arm64' else 'osx-x64'
+                    tkdnd_path = os.path.join(os.path.dirname(tkinterdnd2.__file__), 'tkdnd', arch)
+                    root.tk.call('lappend', 'auto_path', tkdnd_path)
+                    root.tk.call('package', 'require', 'tkdnd')
                 except tk.TclError:
                     HAS_DND = False
             else:
